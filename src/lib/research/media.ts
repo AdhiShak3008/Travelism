@@ -76,12 +76,20 @@ export function imgSet(
 }
 
 // ---------------------------------------------------------------------------
-// Videos — realistic YouTube-style discovery assets.
-// youtubeId values point at real neutral thumbnails via i.ytimg fallback.
+// Videos — honest discovery assets. Thumbnails use real scenic imagery and the
+// card links to a YouTube *search* for the title (discovery), not a fabricated
+// exact video. A live provider would replace these with real result ids.
 // ---------------------------------------------------------------------------
-function ytThumb(id: string): string {
-  return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
-}
+const KIND_POOL: Record<VideoAsset["kind"], keyof typeof POOLS> = {
+  road: "road",
+  walk: "monastery",
+  attraction: "lake",
+  room_tour: "hotelroom",
+  review: "hotelroom",
+  food: "food",
+  vlog: "himalaya",
+  seasonal: "himalaya",
+};
 
 let vc = 0;
 export function video(
@@ -92,16 +100,15 @@ export function video(
   why: string,
   kind: VideoAsset["kind"]
 ): VideoAsset {
-  const ytIds = ["oHg5SJYRHA0", "dQw4w9WgXcQ", "aqz-KE-bpKQ", "ScMzIvxBSi4", "kJQP7kiw5Fk"];
-  const yid = ytIds[vc % ytIds.length];
   vc++;
+  const thumb = img(KIND_POOL[kind] ?? "himalaya", "attraction").url;
   return {
     id: `vid_${vc}`,
     title,
     creator,
-    thumbnail: ytThumb(yid),
+    thumbnail: thumb,
     duration,
-    youtubeId: yid,
+    searchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(title)}`,
     why,
     relatesTo,
     kind,

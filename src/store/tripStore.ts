@@ -31,6 +31,8 @@ import {
   structuredCloneBlob,
 } from "@/lib/engine";
 import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
+import { runLiveInvestigation, fetchCapabilities, type LiveProgress } from "@/lib/liveClient";
+import { registerSources } from "@/lib/research/sourceRegistry";
 
 const now = () => new Date().toISOString();
 
@@ -97,7 +99,8 @@ interface TripStore {
 
   // flow
   setStage: (s: Stage) => void;
-  startDream: (dream: string) => void;
+  startDream: (dream: string) => Promise<void>;
+  liveMode: boolean | null; // null = unknown, true = live pipeline, false = fallback
   toggleSelectPlace: (placeId: string) => void;
   setDuration: (days: number) => void;
   setTravelers: (n: number) => void;
@@ -135,34 +138,85 @@ export const useTrip = create<TripStore>((set, get) => ({
   agents: AGENT_ORDER.map((id) => makeIdleActivity(id)),
   investigating: false,
   lastMessage: null,
+  liveMode: null,
 
   setStage: (s) => set({ stage: s }),
 
-  startDream: (dream) => {
-    const resolved = research.resolveDestination(dream);
-    const dest = resolved ?? { id: "dest_tawang", name: "Tawang" };
-    const dataset = research.getDataset(dest.id, dest.name);
-
-    // parse the dream itself into signals + mood + prefs
+  startDream: async (dream) => {
+    // parse the dream locally into signals + mood + prefs (instant, no network)
     const signals = parseComment(dream, "trip");
     let mood = { ...DEFAULT_MOOD };
-    const md = moodDeltaFromComment(dream);
-    mood = applyMoodDelta(mood, md);
+    mood = applyMoodDelta(mood, moodDeltaFromComment(dream));
     const prefs = derivePreferences(signals, { ...DEFAULT_PREFS });
 
-    const blob: TripBlob = {
+    const baseBlob: TripBlob = {
       ...emptyBlob(),
       dream,
-      destinationId: dest.id,
-      destinationName: dest.name,
       mood,
       preferences: prefs,
       travelers: prefs.travelers,
       signals,
+    };
+    set({ blob: baseBlob, stage: "investigate", investigating: true });
+
+    // Decide live vs fallback
+    const caps = await fetchCapabilities();
+    set({ liveMode: caps.live });
+
+    // seed the agent list in queued state
+    set({
+      agents: AGENT_ORDER.map((id) => ({ ...makeIdleActivity(id, 0.6), phase: "queued", status: "Queued" })),
+    });
+
+    if (caps.live) {
+      try {
+        const onProgress = (p: LiveProgress) => {
+          if (p.agent === "concierge") {
+            set({ lastMessage: p.status });
+            return;
+          }
+          set((st) => ({
+            agents: st.agents.map((a) =>
+              a.id === p.agent ? { ...a, phase: p.phase, status: p.status, metric: p.metric ?? a.metric } : a
+            ),
+          }));
+        };
+        const dataset = await runLiveInvestigation(dream, onProgress);
+        registerSources(dataset.sources);
+        const blob: TripBlob = {
+          ...baseBlob,
+          destinationId: dataset.meta.id,
+          destinationName: dataset.meta.name,
+          conflicts: dataset.conflicts,
+          updatedAt: now(),
+        };
+        // mark any still-queued agents as done
+        set((st) => ({
+          blob,
+          dataset,
+          investigating: false,
+          stage: "reveal",
+          agents: st.agents.map((a) => (a.phase === "queued" || a.phase === "working" ? { ...a, phase: "done", status: "Done" } : a)),
+        }));
+        return;
+      } catch (e) {
+        // Live failed → honest fallback to built-in dataset.
+        set({ lastMessage: "Live investigation unavailable — showing built-in intelligence." });
+      }
+    }
+
+    // Fallback path (no keys or live failed): use built-in dataset.
+    const resolved = research.resolveDestination(dream);
+    const dest = resolved ?? { id: "dest_tawang", name: "Tawang" };
+    const dataset = research.getDataset(dest.id, dest.name);
+    registerSources(dataset.sources);
+    const blob: TripBlob = {
+      ...baseBlob,
+      destinationId: dest.id,
+      destinationName: dest.name,
       conflicts: dataset.conflicts,
     };
-
-    set({ blob, dataset, stage: "reveal" });
+    set({ blob, dataset, investigating: false, stage: "reveal", liveMode: false });
   },
 
   toggleSelectPlace: (placeId) => {

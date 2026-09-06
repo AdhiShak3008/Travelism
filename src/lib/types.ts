@@ -131,7 +131,8 @@ export interface VideoAsset {
   creator: string;
   thumbnail: string;
   duration: string; // mm:ss
-  youtubeId: string;
+  /** opens a YouTube search for this title — honest "discovery", not a fabricated exact video */
+  searchUrl: string;
   /** why it is useful for this entity */
   why: string;
   relatesTo: string; // entity id

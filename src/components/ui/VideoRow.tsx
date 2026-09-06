@@ -28,9 +28,10 @@ export function VideoRow({ videos, title = "See it through someone else's eyes" 
         {videos.map((v) => (
           <motion.a
             key={v.id}
-            href={`https://www.youtube.com/watch?v=${v.youtubeId}`}
+            href={v.searchUrl}
             target="_blank"
             rel="noreferrer"
+            title="Opens a YouTube search"
             whileHover={{ y: -3 }}
             className="group w-64 shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-ink-800/60"
           >

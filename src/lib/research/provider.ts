@@ -48,6 +48,10 @@ export interface DestinationDataset {
   food: FoodPick[];
   evidence: EvidencePacket[];
   conflicts: Conflict[];
+  /** Live datasets carry their own dynamically-discovered sources. */
+  sources?: Record<string, Source>;
+  /** true when produced by the live investigation pipeline. */
+  live?: boolean;
 }
 
 // ---------------------------------------------------------------------------

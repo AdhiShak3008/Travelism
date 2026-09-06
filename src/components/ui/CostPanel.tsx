@@ -4,7 +4,7 @@ import { useTrip } from "@/store/tripStore";
 import { costTotals } from "@/lib/engine";
 import { inr, cx, timeAgo } from "@/lib/format";
 import { AnimatedNumber } from "./Primitives";
-import { research } from "@/lib/research/provider";
+import { resolveSource } from "@/lib/research/sourceRegistry";
 
 const STATUS_TONE: Record<string, string> = {
   confirmed: "text-signal-good",
@@ -43,7 +43,7 @@ export function CostPanel({ compact = false }: { compact?: boolean }) {
       {!compact && (
         <div className="mt-4 space-y-1.5 border-t border-white/[0.06] pt-4">
           {costs.map((c) => {
-            const s = c.sourceId ? research.getSource(c.sourceId) : undefined;
+            const s = c.sourceId ? resolveSource(c.sourceId) : undefined;
             return (
               <div key={c.id} className="flex items-center justify-between text-sm">
                 <div className="min-w-0">

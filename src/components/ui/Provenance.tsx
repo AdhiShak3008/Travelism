@@ -1,6 +1,6 @@
 "use client";
 
-import { research } from "@/lib/research/provider";
+import { resolveSource } from "@/lib/research/sourceRegistry";
 import { sourceReliabilityLabel } from "@/lib/research/sources";
 import { timeAgo, cx } from "@/lib/format";
 
@@ -8,7 +8,7 @@ export function SourceChips({ sourceIds }: { sourceIds: string[] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {sourceIds.map((id) => {
-        const s = research.getSource(id);
+        const s = resolveSource(id);
         if (!s) return null;
         const tone =
           s.reliability >= 0.9
@@ -37,7 +37,7 @@ export function ProvenanceLine({
   sourceId?: string;
   basis?: string;
 }) {
-  const s = sourceId ? research.getSource(sourceId) : undefined;
+  const s = sourceId ? resolveSource(sourceId) : undefined;
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
       <span className="text-paper-200/60">{label}</span>

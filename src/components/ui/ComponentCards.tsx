@@ -7,7 +7,7 @@ import type { FlightOption, TransportOption, Permit, FoodPick, Conflict } from "
 import { useTrip } from "@/store/tripStore";
 import { inr, cx } from "@/lib/format";
 import { SourceChips } from "./Provenance";
-import { research } from "@/lib/research/provider";
+import { resolveSource } from "@/lib/research/sourceRegistry";
 import { StarRating } from "./Primitives";
 import { SteeringBox } from "./SteeringBox";
 
@@ -171,8 +171,8 @@ export function FoodCard({ food }: { food: FoodPick }) {
 
 // ---------------------------------------------------------------------------
 export function ConflictBanner({ conflict }: { conflict: Conflict }) {
-  const a = research.getSource(conflict.claimA.sourceId);
-  const b = research.getSource(conflict.claimB.sourceId);
+  const a = resolveSource(conflict.claimA.sourceId);
+  const b = resolveSource(conflict.claimB.sourceId);
   return (
     <div className="rounded-2xl border border-signal-warn/25 bg-signal-warn/[0.05] p-4">
       <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-signal-warn">
