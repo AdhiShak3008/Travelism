@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { StageProgress } from "@/components/ui/StageProgress";
 import { DreamStage } from "@/components/stages/DreamStage";
@@ -36,25 +36,22 @@ export function Flow() {
         </header>
       )}
 
-      <AnimatePresence mode="wait">
-        <motion.main
-          key={stage}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.35, ease: "easeOut" }}
-        >
-          {stage === "dream" && <DreamStage />}
-          {stage === "reveal" && <RevealStage />}
-          {stage === "select" && <RevealStage />}
-          {stage === "shape" && <ShapeStage />}
-          {stage === "mood" && <MoodStage />}
-          {stage === "investigate" && <InvestigateStage />}
-          {(stage === "package" || stage === "refine" || stage === "cost") && <PackageStage />}
-          {stage === "checkout" && <CheckoutStage />}
-          {stage === "trip" && <TripModeStage />}
-        </motion.main>
-      </AnimatePresence>
+      <motion.main
+        key={stage}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut" }}
+      >
+        {stage === "dream" && <DreamStage />}
+        {stage === "reveal" && <RevealStage />}
+        {stage === "select" && <RevealStage />}
+        {stage === "shape" && <ShapeStage />}
+        {stage === "mood" && <MoodStage />}
+        {stage === "investigate" && <InvestigateStage />}
+        {(stage === "package" || stage === "refine" || stage === "cost") && <PackageStage />}
+        {stage === "checkout" && <CheckoutStage />}
+        {stage === "trip" && <TripModeStage />}
+      </motion.main>
     </div>
   );
 }

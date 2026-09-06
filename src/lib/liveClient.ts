@@ -82,6 +82,55 @@ export async function runLiveInvestigation(
   return dataset;
 }
 
+export interface RefineResult {
+  places: import("@/lib/types").Place[];
+  sources: Record<string, import("@/lib/types").Source>;
+  query: string;
+  found: number;
+}
+
+/** Targeted re-investigation: streams progress, resolves with new places. */
+export async function runRefine(
+  destination: string,
+  request: string,
+  existingNames: string[],
+  onProgress: (p: LiveProgress) => void,
+  signal?: AbortSignal
+): Promise<RefineResult> {
+  const res = await fetch("/api/refine", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination, request, existingNames }),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(res.status === 503 ? "live_unavailable" : `http_${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: RefineResult | null = null;
+  let errorMsg: string | null = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const { event, data } = parseFrame(frame);
+      if (event === "progress") onProgress(data as LiveProgress);
+      else if (event === "done") result = data as RefineResult;
+      else if (event === "error") errorMsg = (data as { message?: string }).message ?? "error";
+    }
+  }
+  if (errorMsg) throw new Error(errorMsg);
+  if (!result) throw new Error("no_result");
+  return result;
+}
+
 function parseFrame(frame: string): { event?: string; data?: unknown } {
   let event: string | undefined;
   let dataStr = "";

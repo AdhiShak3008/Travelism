@@ -353,9 +353,114 @@ export async function investigate(
   return dataset;
 }
 
+// ============================================================================
+// Targeted RE-INVESTIGATION. A steering comment ("more scenic places and
+// buddhist sites") becomes a scoped live crawl that discovers NEW places and
+// returns them (plus their sources) to merge into the existing reveal.
+// ============================================================================
+export interface RefineResult {
+  places: Place[];
+  sources: Record<string, Source>;
+  query: string;
+  found: number;
+}
+
+export async function refinePlaces(
+  destination: string,
+  request: string,
+  existingNames: string[],
+  emit: Emit = noop,
+  signal?: AbortSignal
+): Promise<RefineResult> {
+  const sources: Record<string, Source> = {};
+  const sourceIdFor = (url: string): string => {
+    const c = classifySource(url);
+    const id = "src_" + hashStr(url);
+    if (!sources[id]) {
+      sources[id] = { id, label: c.label, url, type: c.type, reliability: c.reliability, checkedAt: new Date().toISOString() };
+    }
+    return id;
+  };
+
+  emit({ agent: "scout", phase: "working", status: `Searching: ${request}` });
+
+  // Turn the free-text request into a focused search query.
+  const query = `${request} in ${destination}`.replace(/\s+/g, " ").trim();
+  const results = await tavilySearch(query, { maxResults: 7, depth: "advanced", signal }).catch(() => []);
+  const pages = await crawlMany(results.map((r) => r.url), 4, signal);
+  // backfill from Tavily content when a page was blocked
+  for (const p of pages) {
+    sourceIdFor(p.finalUrl || p.url);
+    if ((!p.text || p.wordCount < 40) && !p.ok) {
+      const tav = results.find((r) => r.url === p.url);
+      if (tav?.content) {
+        p.text = tav.content.slice(0, 4000);
+        p.wordCount = p.text.split(/\s+/).length;
+        p.ok = true;
+      }
+    }
+  }
+
+  emit({ agent: "scout", phase: "working", status: "Extracting new places" });
+  let extracted = await extractPlaces(destination, pages, signal).catch(() => []);
+
+  // Drop places we already have (case-insensitive name / altName match).
+  const have = new Set(existingNames.map((n) => n.toLowerCase().trim()));
+  extracted = extracted.filter((p) => {
+    const names = [p.name, ...(p.altNames ?? [])].map((n) => n.toLowerCase().trim());
+    return !names.some((n) => have.has(n));
+  });
+
+  emit({ agent: "lens", phase: "working", status: "Fetching photos for new places" });
+  const wikiImgs = await mapLimited(extracted, 4, (p) =>
+    fetchWikiImages(`${p.name} ${destination}`, "attraction", 3, signal).catch(() => [])
+  );
+  const crawlImgs = collectImages(pages);
+  const usedUrls = new Set<string>();
+
+  const pageSourceIds = uniq(pages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 3);
+
+  const places: Place[] = extracted.map((p, i) => {
+    const wiki = (wikiImgs[i] ?? []).filter((im) => !usedUrls.has(im.url));
+    wiki.forEach((im) => usedUrls.add(im.url));
+    const imgs = [...wiki, ...crawlImgs.slice(i, i + 1)].slice(0, 4);
+    return {
+      id: `place_refine_${Date.now()}_${i}_${destinationKey(p.name)}`,
+      canonicalName: p.name,
+      altNames: p.altNames ?? [],
+      category: p.category ?? "core",
+      blurb: p.blurb,
+      description: p.description ?? p.blurb,
+      images: imgs.length ? imgs : [placeholderImage("attraction")],
+      videoIds: [],
+      durationHours: p.durationHours ?? 2,
+      distanceKm: p.distanceKm,
+      travelTime: p.travelTime,
+      bestTime: p.bestTime,
+      difficulty: p.difficulty,
+      accessible: p.accessible,
+      permitRequired: p.permitRequired,
+      facts: p.facts ?? [],
+      nearby: [],
+      sourceIds: pageSourceIds,
+      confidence: 0.68,
+      routeOrder: routeOrderFor(p.category ?? "core", 50 + i),
+    };
+  });
+
+  emit({ agent: "scout", phase: "done", status: `Found ${places.length} new places`, metric: `${places.length}` });
+  return { places, sources, query, found: places.length };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+function hashStr(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function aspect(intel: ReviewIntel, key: string): number | undefined {
   const a = intel.aspects.find((x) => x.aspect.toLowerCase().includes(key));
   return a?.score;

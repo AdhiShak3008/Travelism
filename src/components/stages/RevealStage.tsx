@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { PlaceCard } from "@/components/ui/PlaceCard";
 import { TripTray } from "@/components/ui/TripTray";
-import { SteeringBox } from "@/components/ui/SteeringBox";
+import { RefineBox } from "@/components/ui/RefineBox";
 import { VideoRow } from "@/components/ui/VideoRow";
 import { SectionTitle } from "@/components/ui/Primitives";
 import type { PlaceCategory } from "@/lib/types";
@@ -92,9 +92,9 @@ export function RevealStage() {
           </motion.div>
         </div>
 
-        {/* Trip-wide steering */}
+        {/* Trip-wide steering — actually re-investigates and adds new places */}
         <div className="mt-10">
-          <SteeringBox scope="trip" title="Shape the investigation" />
+          <RefineBox />
         </div>
 
         <div className="mt-6 flex justify-between">

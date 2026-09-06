@@ -31,7 +31,7 @@ import {
   structuredCloneBlob,
 } from "@/lib/engine";
 import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
-import { runLiveInvestigation, fetchCapabilities, type LiveProgress } from "@/lib/liveClient";
+import { runLiveInvestigation, runRefine, fetchCapabilities, type LiveProgress } from "@/lib/liveClient";
 import { registerSources } from "@/lib/research/sourceRegistry";
 
 const now = () => new Date().toISOString();
@@ -93,13 +93,17 @@ interface TripStore {
   blob: TripBlob;
   dataset: DestinationDataset | null;
   stage: Stage;
+  maxStageReached: Stage;
   agents: AgentActivity[];
   investigating: boolean;
+  refining: boolean;
   lastMessage: string | null;
 
   // flow
   setStage: (s: Stage) => void;
+  goToStage: (s: Stage) => void; // navigation guarded by maxStageReached
   startDream: (dream: string) => Promise<void>;
+  refineInvestigation: (text: string) => Promise<void>;
   liveMode: boolean | null; // null = unknown, true = live pipeline, false = fallback
   toggleSelectPlace: (placeId: string) => void;
   setDuration: (days: number) => void;
@@ -137,10 +141,21 @@ export const useTrip = create<TripStore>((set, get) => ({
   stage: "dream",
   agents: AGENT_ORDER.map((id) => makeIdleActivity(id)),
   investigating: false,
+  refining: false,
   lastMessage: null,
   liveMode: null,
+  maxStageReached: "dream",
 
-  setStage: (s) => set({ stage: s }),
+  setStage: (s) => {
+    const { maxStageReached } = get();
+    set({ stage: s, maxStageReached: furthestStage(maxStageReached, s) });
+  },
+
+  goToStage: (s) => {
+    // allow jumping to any stage already reached (or the current one)
+    const { maxStageReached } = get();
+    if (stageRank(s) <= stageRank(maxStageReached)) set({ stage: s });
+  },
 
   startDream: async (dream) => {
     // parse the dream locally into signals + mood + prefs (instant, no network)
@@ -196,6 +211,7 @@ export const useTrip = create<TripStore>((set, get) => ({
           dataset,
           investigating: false,
           stage: "reveal",
+          maxStageReached: "reveal",
           agents: st.agents.map((a) => (a.phase === "queued" || a.phase === "working" ? { ...a, phase: "done", status: "Done" } : a)),
         }));
         return;
@@ -216,7 +232,7 @@ export const useTrip = create<TripStore>((set, get) => ({
       destinationName: dest.name,
       conflicts: dataset.conflicts,
     };
-    set({ blob, dataset, investigating: false, stage: "reveal", liveMode: false });
+    set({ blob, dataset, investigating: false, stage: "reveal", maxStageReached: "reveal", liveMode: false });
   },
 
   toggleSelectPlace: (placeId) => {
@@ -266,6 +282,48 @@ export const useTrip = create<TripStore>((set, get) => ({
       lastMessage: signals[0]?.interpretation ?? null,
     });
     return signals;
+  },
+
+  refineInvestigation: async (text) => {
+    const { blob, dataset, liveMode } = get();
+    if (!dataset || !text.trim()) return;
+
+    // Record the steering comment as a signal first (affects ranking too).
+    get().addComment(text, "trip");
+
+    if (!liveMode) {
+      set({ lastMessage: "Steering noted. Live re-investigation needs the live pipeline (Groq + Tavily)." });
+      return;
+    }
+
+    set({ refining: true, lastMessage: `Sending the agents back out: “${text}”` });
+    try {
+      const existingNames = dataset.places.flatMap((p) => [p.canonicalName, ...p.altNames]);
+      const onProgress = (p: LiveProgress) => {
+        if (p.agent === "concierge") return;
+        set((st) => ({
+          agents: st.agents.map((a) => (a.id === p.agent ? { ...a, phase: p.phase, status: p.status, metric: p.metric ?? a.metric } : a)),
+        }));
+      };
+      const result = await runRefine(dataset.meta.name, text, existingNames, onProgress);
+      registerSources(result.sources);
+
+      if (result.found === 0) {
+        set({ refining: false, lastMessage: `No new places found for “${text}”. Your reveal already covers it.` });
+        return;
+      }
+
+      // Merge new places + sources into the dataset, re-sorted by route order.
+      const mergedPlaces = [...get().dataset!.places, ...result.places].sort((a, b) => a.routeOrder - b.routeOrder);
+      const mergedSources = { ...(get().dataset!.sources ?? {}), ...result.sources };
+      set((st) => ({
+        dataset: st.dataset ? { ...st.dataset, places: mergedPlaces, sources: mergedSources } : st.dataset,
+        refining: false,
+        lastMessage: `Added ${result.found} new place${result.found > 1 ? "s" : ""} from “${text}”.`,
+      }));
+    } catch (e) {
+      set({ refining: false, lastMessage: "Re-investigation failed. Try rephrasing your request." });
+    }
   },
 
   runInvestigation: async () => {
@@ -516,6 +574,7 @@ export const useTrip = create<TripStore>((set, get) => ({
     set({
       blob: { ...blob, bookingState: "booked", bookedAt: now(), updatedAt: now() },
       stage: "trip",
+      maxStageReached: "trip",
     });
   },
 
@@ -524,8 +583,10 @@ export const useTrip = create<TripStore>((set, get) => ({
       blob: emptyBlob(),
       dataset: null,
       stage: "dream",
+      maxStageReached: "dream",
       agents: AGENT_ORDER.map((id) => makeIdleActivity(id)),
       investigating: false,
+      refining: false,
       lastMessage: null,
     });
   },
@@ -551,6 +612,17 @@ export const useTrip = create<TripStore>((set, get) => ({
 // ---------------------------------------------------------------------------
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+const STAGE_RANK: Record<Stage, number> = {
+  dream: 0, reveal: 1, select: 1, shape: 2, mood: 3,
+  investigate: 4, package: 5, refine: 5, cost: 5, checkout: 6, trip: 7,
+};
+export function stageRank(s: Stage): number {
+  return STAGE_RANK[s];
+}
+function furthestStage(a: Stage, b: Stage): Stage {
+  return STAGE_RANK[b] > STAGE_RANK[a] ? b : a;
 }
 
 function rankHotels(blob: TripBlob, dataset: DestinationDataset): HotelOption[] {

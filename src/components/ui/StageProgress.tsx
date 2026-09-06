@@ -2,6 +2,7 @@
 
 import type { Stage } from "@/lib/types";
 import { cx } from "@/lib/format";
+import { useTrip, stageRank } from "@/store/tripStore";
 
 const STEPS: { id: Stage; label: string }[] = [
   { id: "dream", label: "Dream" },
@@ -25,19 +26,29 @@ function idx(stage: Stage): number {
 
 export function StageProgress({ stage }: { stage: Stage }) {
   const active = idx(stage);
+  const maxReached = useTrip((s) => s.maxStageReached);
+  const goToStage = useTrip((s) => s.goToStage);
+  const investigating = useTrip((s) => s.investigating);
+  const maxRank = stageRank(maxReached);
+
   return (
     <div className="no-scrollbar flex items-center gap-1 overflow-x-auto">
       {STEPS.map((s, i) => {
         const done = i < active;
         const now = i === active;
+        // a step is reachable if it's at or before the furthest stage reached
+        const reachable = !investigating && stageRank(s.id) <= maxRank;
+        const Tag = reachable ? "button" : "div";
         return (
           <div key={s.id} className="flex items-center gap-1">
-            <div
+            <Tag
+              onClick={reachable ? () => goToStage(s.id) : undefined}
               className={cx(
                 "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition",
                 now && "bg-alpine-500/15 text-alpine-200",
                 done && "text-paper-200/50",
-                !now && !done && "text-paper-200/25"
+                !now && !done && "text-paper-200/25",
+                reachable && !now && "hover:bg-white/[0.06] hover:text-paper-100 cursor-pointer"
               )}
             >
               <span
@@ -51,7 +62,7 @@ export function StageProgress({ stage }: { stage: Stage }) {
                 {done ? "✓" : i + 1}
               </span>
               <span className="whitespace-nowrap">{s.label}</span>
-            </div>
+            </Tag>
             {i < STEPS.length - 1 && <span className="text-paper-200/20">·</span>}
           </div>
         );
