@@ -1,0 +1,69 @@
+"use client";
+
+import { AnimatePresence, motion } from "framer-motion";
+import { useTrip } from "@/store/tripStore";
+import { estimateDaysForPlaces } from "@/lib/engine";
+
+export function TripTray({ onContinue }: { onContinue: () => void }) {
+  const dataset = useTrip((s) => s.dataset);
+  const selectedIds = useTrip((s) => s.blob.selectedPlaceIds);
+  const toggle = useTrip((s) => s.toggleSelectPlace);
+  const pace = useTrip((s) => s.blob.preferences.pace);
+
+  const places = dataset?.places.filter((p) => selectedIds.includes(p.id)) ?? [];
+  const days = estimateDaysForPlaces(places, pace);
+
+  return (
+    <AnimatePresence>
+      {places.length > 0 && (
+        <motion.div
+          initial={{ y: 80, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 80, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 320, damping: 32 }}
+          className="fixed inset-x-0 bottom-0 z-40 px-3 pb-3 sm:px-6 sm:pb-6"
+        >
+          <div className="glass mx-auto flex max-w-5xl flex-col gap-3 rounded-2xl p-3 shadow-lift sm:flex-row sm:items-center sm:gap-4 sm:p-4">
+            <div className="min-w-0 flex-1">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-alpine-300/80">
+                Your {dataset?.meta.name}
+              </div>
+              <div className="no-scrollbar flex gap-2 overflow-x-auto">
+                <AnimatePresence mode="popLayout">
+                  {places.map((p) => (
+                    <motion.button
+                      layout
+                      key={p.id}
+                      initial={{ scale: 0.6, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.6, opacity: 0 }}
+                      onClick={() => toggle(p.id)}
+                      className="group flex shrink-0 items-center gap-1.5 rounded-full border border-alpine-400/30 bg-alpine-500/10 py-1 pl-3 pr-2 text-sm text-paper-50"
+                    >
+                      {p.canonicalName}
+                      <span className="grid h-4 w-4 place-items-center rounded-full bg-white/10 text-[10px] group-hover:bg-signal-bad/40">
+                        ×
+                      </span>
+                    </motion.button>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-white/[0.06] pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              <div className="text-right">
+                <div className="text-sm font-semibold text-paper-50">
+                  {places.length} place{places.length > 1 ? "s" : ""}
+                </div>
+                <div className="text-xs text-paper-200/60">≈ {days} days incl. travel</div>
+              </div>
+              <button onClick={onContinue} className="btn-primary whitespace-nowrap">
+                Continue →
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
