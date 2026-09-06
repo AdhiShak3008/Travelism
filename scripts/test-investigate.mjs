@@ -38,6 +38,11 @@ console.log("Destination:", dataset.meta.name, "|", dataset.meta.region, "| gate
 console.log("Tagline:", dataset.meta.tagline);
 console.log("Live:", dataset.live, "| sources:", Object.keys(dataset.sources || {}).length);
 console.log("Places:", dataset.places.length, "→", dataset.places.map(p => p.canonicalName).join(", "));
+console.log("Hero:", dataset.meta.hero.slice(0, 90));
+console.log("Sample place images:");
+for (const p of dataset.places.slice(0, 3)) {
+  console.log(`  ${p.canonicalName}: ${p.images.length} img — ${p.images[0]?.url.slice(0, 80)} [${p.images[0]?.credit}]`);
+}
 console.log("Hotels:", dataset.hotels.length, "→", dataset.hotels.map(h => `${h.name} (clean ${h.cleanliness}, bath ${h.bathroomScore}, ₹${h.pricePerNight})`).join(" | "));
 console.log("Permits:", dataset.permits.map(p => p.name).join(", ") || "none");
 console.log("Food:", dataset.food.map(f => f.name).join(", ") || "none");

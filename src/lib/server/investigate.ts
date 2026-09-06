@@ -26,6 +26,7 @@ import {
   detectConflicts,
 } from "./extract";
 import { searchVideos } from "./youtube";
+import { fetchWikiImages } from "./wikimedia";
 import { classifySource, recencyWeight, confidenceScore } from "./reliability";
 import { CAP } from "./env";
 
@@ -133,8 +134,26 @@ export async function investigate(
   // build Place[] with media + source provenance
   const allPageSourceIds = uniq([...overviewPages, ...placePages].map((p) => sourceIdFor(p.finalUrl || p.url)));
   const placeImages = collectImages([...overviewPages, ...placePages]);
+
+  // Fetch real, licensed photos per place from Wikimedia (free, no key), in
+  // parallel with bounded concurrency. Falls back to crawled images, then a
+  // neutral placeholder — never a fabricated photo of a real place.
+  emit({ agent: "lens", phase: "working", status: "Gathering visitor photos" });
+  const rawWikiPlaceImages = await mapLimited(extractedPlaces, 4, (p) =>
+    fetchWikiImages(`${p.name} ${dest}`, "attraction", 3, signal).catch(() => [])
+  );
+  // Dedup images across places so two places don't show the same photo.
+  const usedImageUrls = new Set<string>();
+  const wikiPlaceImages = rawWikiPlaceImages.map((arr) => {
+    const kept = arr.filter((im) => !usedImageUrls.has(im.url));
+    kept.forEach((im) => usedImageUrls.add(im.url));
+    return kept;
+  });
+
   const places: Place[] = extractedPlaces.map((p, i) => {
-    const imgs = placeImages.slice(i * 2, i * 2 + 3);
+    const wiki = wikiPlaceImages[i] ?? [];
+    const crawled = placeImages.slice(i * 2, i * 2 + 2);
+    const imgs = [...wiki, ...crawled].slice(0, 4);
     return {
       id: `place_${i}_${destinationKey(p.name)}`,
       canonicalName: p.name,
@@ -159,10 +178,13 @@ export async function investigate(
     };
   });
 
-  // ---- LENS: images already gathered from crawl (provenance = editorial/guest) ----
-  emit({ agent: "lens", phase: "working", status: "Gathering visitor photos" });
-  const totalPhotos = placeImages.length + collectImages(overviewPages).length;
+  // ---- LENS: real Wikimedia photos + crawled images ----
+  const wikiPhotoCount = wikiPlaceImages.reduce((s, arr) => s + arr.length, 0);
+  const totalPhotos = wikiPhotoCount + placeImages.length;
   emit({ agent: "lens", phase: "done", status: "Photos gathered", metric: `${totalPhotos} images` });
+
+  // Destination hero — prefer a real Wikimedia lead image for the destination.
+  const heroImgs = await fetchWikiImages(dest, "landscape", 1, signal).catch(() => []);
 
   // ---- REEL SCOUT: videos (real if YouTube key, else honest none) ----
   emit({ agent: "reel_scout", phase: "working", status: CAP.youtube ? "Finding useful videos" : "Video API not configured" });
@@ -309,7 +331,7 @@ export async function investigate(
       tagline: overview.tagline ?? `Discover ${dest}.`,
       region: overview.region ?? intent.region ?? "",
       gateway,
-      hero: (placeImages[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape").url,
+      hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? placeImages[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape").url,
       bestSeason: overview.bestSeason ?? "Shoulder seasons",
       facts: overview.facts ?? [],
     },
@@ -520,6 +542,20 @@ function buildTransportEstimates(dest: string, gateway: string) {
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
+}
+
+/** Map over items with bounded concurrency, preserving order. */
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      out[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 function hash(s: string): string {
