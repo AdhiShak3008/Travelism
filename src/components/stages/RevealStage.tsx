@@ -11,10 +11,10 @@ import { VideoRow } from "@/components/ui/VideoRow";
 import { SectionTitle } from "@/components/ui/Primitives";
 import type { PlaceCategory } from "@/lib/types";
 
-const GROUPS: { key: PlaceCategory; label: string; hint: string }[] = [
-  { key: "core", label: "Core", hint: "The essential sights" },
-  { key: "adventure", label: "Mountain / Adventure", hint: "Higher, wilder, permit-gated" },
-  { key: "enroute", label: "En-route", hint: "Worth stopping for on the drive" },
+const GROUPS: { key: PlaceCategory; label: string }[] = [
+  { key: "core", label: "The essentials" },
+  { key: "adventure", label: "For the adventurous" },
+  { key: "enroute", label: "Worth a stop" },
 ];
 
 export function RevealStage() {
@@ -28,20 +28,20 @@ export function RevealStage() {
 
   return (
     <div className="pb-40">
-      {/* Cinematic destination hero */}
-      <div className="relative h-[52vh] min-h-[380px] w-full overflow-hidden">
+      {/* Cinematic destination hero — the brochure's inside cover */}
+      <div className="relative h-[54vh] min-h-[400px] w-full overflow-hidden">
         <Image src={meta.hero} alt={meta.name} fill priority className="object-cover" unoptimized />
-        <div className="absolute inset-0 bg-hero-fade" />
-        <div className="absolute inset-x-0 bottom-0 mx-auto max-w-6xl px-6 pb-8">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-black/30" />
+        <div className="absolute inset-x-0 bottom-0 mx-auto max-w-6xl px-6 pb-9">
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }}>
-            <div className="label-eyebrow mb-2">{meta.region}</div>
-            <h1 className="font-display text-5xl font-semibold tracking-tight text-paper-50 sm:text-6xl">{meta.name}</h1>
-            <p className="mt-3 max-w-2xl text-lg text-paper-200/85">{meta.tagline}</p>
+            <div className="stamp mb-3 !bg-white/85 backdrop-blur">{meta.region || "Field notes"}</div>
+            <h1 className="display text-5xl font-semibold tracking-tight text-white drop-shadow sm:text-6xl">{meta.name}</h1>
+            <p className="mt-3 max-w-2xl text-lg text-white/90 drop-shadow">{meta.tagline}</p>
             <div className="mt-4 flex flex-wrap gap-2">
-              <span className="chip !border-white/15 !bg-black/30 backdrop-blur">🛬 Gateway · {meta.gateway}</span>
-              <span className="chip !border-white/15 !bg-black/30 backdrop-blur">🗓 Best · {meta.bestSeason}</span>
-              {meta.facts.slice(0, 2).map((f) => (
-                <span key={f} className="chip !border-white/15 !bg-black/30 backdrop-blur">{f}</span>
+              <span className="chip !bg-white/85 backdrop-blur">🛬 Fly into {meta.gateway}</span>
+              <span className="chip !bg-white/85 backdrop-blur">🗓 Best {meta.bestSeason}</span>
+              {meta.facts.slice(0, 1).map((f) => (
+                <span key={f} className="chip !bg-white/85 backdrop-blur">{f}</span>
               ))}
             </div>
           </motion.div>
@@ -49,19 +49,17 @@ export function RevealStage() {
       </div>
 
       <div className="mx-auto max-w-6xl px-6">
-        {/* See it yourself */}
         {destVideos.length > 0 && (
           <div className="mt-8">
-            <VideoRow videos={destVideos} title="See it yourself" />
+            <VideoRow videos={destVideos} title="A glimpse before you go" />
           </div>
         )}
 
-        {/* Category tabs */}
         <div className="mt-10">
           <SectionTitle
-            eyebrow="Destination intelligence"
-            title={`What ${meta.name} has to offer`}
-            hint="Browse the places, expand any card for evidence, photos and video, then add the experiences you actually want."
+            eyebrow="Here's what we found"
+            title={`The best of ${meta.name}`}
+            hint="Browse like a brochure. Tap the + on anything you'd love to do — it drops into your itinerary at the bottom."
           />
           <div className="mb-5 flex flex-wrap gap-2">
             {GROUPS.map((g) => {
@@ -73,8 +71,8 @@ export function RevealStage() {
                   onClick={() => setTab(g.key)}
                   className={
                     tab === g.key
-                      ? "rounded-full bg-alpine-500 px-4 py-2 text-sm font-semibold text-ink-950"
-                      : "rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-paper-200/80 hover:bg-white/[0.06]"
+                      ? "rounded-full bg-brand px-4 py-2 text-sm font-semibold text-paper"
+                      : "rounded-full border border-line-strong bg-paper-2 px-4 py-2 text-sm text-ink-soft hover:text-ink"
                   }
                 >
                   {g.label} <span className="opacity-60">· {count}</span>
@@ -92,14 +90,13 @@ export function RevealStage() {
           </motion.div>
         </div>
 
-        {/* Trip-wide steering — actually re-investigates and adds new places */}
         <div className="mt-10">
           <RefineBox />
         </div>
 
         <div className="mt-6 flex justify-between">
           <button onClick={() => setStage("dream")} className="btn-ghost">
-            ← Change dream
+            ← Start over
           </button>
         </div>
       </div>

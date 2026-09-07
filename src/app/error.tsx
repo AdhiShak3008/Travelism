@@ -11,12 +11,12 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
   return (
     <div className="mx-auto max-w-lg px-6 py-20 text-center">
       <div className="text-4xl">⚠️</div>
-      <h2 className="mt-3 font-display text-2xl font-semibold text-paper-50">Something broke while rendering</h2>
-      <p className="mt-2 text-sm text-paper-200/60">
+      <h2 className="mt-3 display text-2xl font-semibold text-ink">Something broke while rendering</h2>
+      <p className="mt-2 text-sm text-ink-soft">
         {error?.message || "An unexpected error occurred."}
       </p>
       {error?.stack && (
-        <pre className="mt-4 max-h-64 overflow-auto rounded-xl border border-white/10 bg-ink-900/60 p-3 text-left text-[11px] text-paper-200/60">
+        <pre className="mt-4 max-h-64 overflow-auto rounded-xl border border-line bg-paper-2 p-3 text-left text-[11px] text-ink-soft">
           {error.stack}
         </pre>
       )}

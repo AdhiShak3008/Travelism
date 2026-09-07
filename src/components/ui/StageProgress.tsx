@@ -45,25 +45,25 @@ export function StageProgress({ stage }: { stage: Stage }) {
               onClick={reachable ? () => goToStage(s.id) : undefined}
               className={cx(
                 "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition",
-                now && "bg-alpine-500/15 text-alpine-200",
-                done && "text-paper-200/50",
-                !now && !done && "text-paper-200/25",
-                reachable && !now && "hover:bg-white/[0.06] hover:text-paper-100 cursor-pointer"
+                now && "bg-brand/12 text-brand",
+                done && "text-ink-soft",
+                !now && !done && "text-ink-faint/50",
+                reachable && !now && "hover:bg-paper-2 hover:text-ink cursor-pointer"
               )}
             >
               <span
                 className={cx(
                   "grid h-4 w-4 place-items-center rounded-full text-[9px]",
-                  now && "bg-alpine-500 text-ink-950",
-                  done && "bg-white/15 text-paper-100",
-                  !now && !done && "border border-white/10"
+                  now && "bg-brand text-paper",
+                  done && "bg-line-strong text-ink",
+                  !now && !done && "border border-line-strong"
                 )}
               >
                 {done ? "✓" : i + 1}
               </span>
               <span className="whitespace-nowrap">{s.label}</span>
             </Tag>
-            {i < STEPS.length - 1 && <span className="text-paper-200/20">·</span>}
+            {i < STEPS.length - 1 && <span className="text-ink-faint/30">·</span>}
           </div>
         );
       })}

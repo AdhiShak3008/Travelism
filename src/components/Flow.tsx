@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { StageProgress } from "@/components/ui/StageProgress";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { DreamStage } from "@/components/stages/DreamStage";
 import { RevealStage } from "@/components/stages/RevealStage";
 import { ShapeStage } from "@/components/stages/ShapeStage";
@@ -22,15 +23,18 @@ export function Flow() {
   return (
     <div className="min-h-screen">
       {showHeader && (
-        <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-ink-950/80 backdrop-blur-xl">
+        <header className="sticky top-0 z-30 border-b border-line bg-paper/85 backdrop-blur-xl">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-            <button onClick={reset} className="flex items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-lg bg-alpine-500 text-sm font-bold text-ink-950">T</span>
-              <span className="font-display text-lg font-semibold tracking-tight text-paper-50">Travelism</span>
-              {destinationName && <span className="hidden text-sm text-paper-200/40 sm:inline">· {destinationName}</span>}
+            <button onClick={reset} className="flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-sm font-bold text-paper">T</span>
+              <span className="display text-lg font-semibold tracking-tight text-ink">Travelism</span>
+              {destinationName && <span className="hidden text-sm text-ink-faint sm:inline">· {destinationName}</span>}
             </button>
-            <div className="hidden md:block">
-              <StageProgress stage={stage} />
+            <div className="flex items-center gap-4">
+              <div className="hidden md:block">
+                <StageProgress stage={stage} />
+              </div>
+              <ThemeToggle />
             </div>
           </div>
         </header>

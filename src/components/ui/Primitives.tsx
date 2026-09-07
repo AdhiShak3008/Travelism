@@ -6,11 +6,11 @@ import { cx } from "@/lib/format";
 
 export function ScoreBar({ value, max = 10, label }: { value: number; max?: number; label?: string }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
-  const color = pct >= 80 ? "bg-signal-good" : pct >= 60 ? "bg-alpine-400" : pct >= 40 ? "bg-signal-warn" : "bg-signal-bad";
+  const color = pct >= 80 ? "bg-good" : pct >= 60 ? "bg-brand" : pct >= 40 ? "bg-warn" : "bg-bad";
   return (
     <div className="flex items-center gap-3">
-      {label && <span className="w-28 shrink-0 text-xs text-paper-200/70">{label}</span>}
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+      {label && <span className="w-28 shrink-0 text-xs text-ink-soft">{label}</span>}
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-paper-3">
         <motion.div
           className={cx("h-full rounded-full", color)}
           initial={{ width: 0 }}
@@ -18,25 +18,22 @@ export function ScoreBar({ value, max = 10, label }: { value: number; max?: numb
           transition={{ duration: 0.7, ease: "easeOut" }}
         />
       </div>
-      <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-paper-100">
-        {value.toFixed(1)}
-      </span>
+      <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-ink">{value.toFixed(1)}</span>
     </div>
   );
 }
 
 export function ConfidencePill({ value }: { value: number }) {
   const pct = Math.round(value * 100);
-  const tone = pct >= 85 ? "text-signal-good" : pct >= 70 ? "text-alpine-300" : "text-signal-warn";
+  const tone = pct >= 85 ? "text-good" : pct >= 70 ? "text-brand" : "text-warn";
   return (
-    <span className={cx("chip !border-white/10", tone)}>
+    <span className={cx("chip", tone)}>
       <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {pct}% confidence
+      {pct}% sure
     </span>
   );
 }
 
-/** Animated number that eases between values (for cost changes). */
 export function AnimatedNumber({
   value,
   prefix = "₹",
@@ -78,9 +75,9 @@ export function AnimatedNumber({
 
 export function Sparkle({ trend }: { trend: "improving" | "stable" | "declining" }) {
   const map = {
-    improving: { t: "Improving", c: "text-signal-good", a: "↗" },
-    stable: { t: "Stable", c: "text-paper-200/70", a: "→" },
-    declining: { t: "Declining", c: "text-signal-bad", a: "↘" },
+    improving: { t: "Loved lately", c: "text-good", a: "↗" },
+    stable: { t: "Steady", c: "text-ink-faint", a: "→" },
+    declining: { t: "Slipping", c: "text-bad", a: "↘" },
   }[trend];
   return (
     <span className={cx("inline-flex items-center gap-1 text-xs font-medium", map.c)}>
@@ -92,26 +89,18 @@ export function Sparkle({ trend }: { trend: "improving" | "stable" | "declining"
 export function StarRating({ value }: { value: number }) {
   return (
     <span className="inline-flex items-center gap-1 text-sm">
-      <span className="text-ember-400">★</span>
-      <span className="font-semibold tabular-nums">{value.toFixed(1)}</span>
+      <span className="text-gold">★</span>
+      <span className="font-semibold tabular-nums text-ink">{value.toFixed(1)}</span>
     </span>
   );
 }
 
-export function SectionTitle({
-  eyebrow,
-  title,
-  hint,
-}: {
-  eyebrow?: string;
-  title: string;
-  hint?: string;
-}) {
+export function SectionTitle({ eyebrow, title, hint }: { eyebrow?: string; title: string; hint?: string }) {
   return (
     <div className="mb-5">
       {eyebrow && <div className="label-eyebrow mb-2">{eyebrow}</div>}
-      <h2 className="font-display text-2xl font-semibold tracking-tight text-paper-50 sm:text-3xl">{title}</h2>
-      {hint && <p className="mt-1.5 max-w-2xl text-sm text-paper-200/70">{hint}</p>}
+      <h2 className="display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">{title}</h2>
+      {hint && <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">{hint}</p>}
     </div>
   );
 }

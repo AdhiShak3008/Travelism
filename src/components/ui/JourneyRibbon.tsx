@@ -8,7 +8,7 @@ export function JourneyRibbon() {
   const dataset = useTrip((s) => s.dataset);
   if (!dataset) return null;
 
-  const gateway = dataset.meta.gateway.split(" ")[0];
+  const gateway = dataset.meta.gateway.split(/[(,]/)[0].trim();
   const dest = dataset.meta.name;
   const enroute = dataset.places
     .filter((p) => p.category === "enroute" && blob.selectedPlaceIds.includes(p.id))
@@ -19,7 +19,7 @@ export function JourneyRibbon() {
     { label: "Home", glyph: "🏠" },
     { label: gateway, glyph: "✈️" },
     ...enroute.map((e) => ({ label: e, glyph: "🚙" })),
-    { label: dest, glyph: "🏔️" },
+    { label: dest, glyph: "📍" },
     { label: gateway, glyph: "🚙" },
     { label: "Home", glyph: "✈️" },
   ];
@@ -34,12 +34,10 @@ export function JourneyRibbon() {
             transition={{ delay: i * 0.06 }}
             className="flex shrink-0 flex-col items-center gap-1"
           >
-            <span className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-ink-800 text-lg">
-              {n.glyph}
-            </span>
-            <span className="max-w-[72px] truncate text-center text-[11px] text-paper-200/60">{n.label}</span>
+            <span className="grid h-10 w-10 place-items-center rounded-full border border-line-strong bg-paper-2 text-lg">{n.glyph}</span>
+            <span className="max-w-[72px] truncate text-center text-[11px] text-ink-soft">{n.label}</span>
           </motion.div>
-          {i < nodes.length - 1 && <span className="mb-4 text-paper-200/25">→</span>}
+          {i < nodes.length - 1 && <span className="mb-4 text-ink-faint/50">→</span>}
         </div>
       ))}
     </div>

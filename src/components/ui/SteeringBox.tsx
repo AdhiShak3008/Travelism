@@ -4,26 +4,25 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { SignalScope, SteeringSignal } from "@/lib/types";
 import { useTrip } from "@/store/tripStore";
-import { AGENTS } from "@/lib/agents";
 import { cx } from "@/lib/format";
 
 const PLACEHOLDERS: Record<string, string> = {
-  trip: "e.g. I care about scenery more than museums. Don't rush me, and the bathroom needs to be genuinely clean.",
-  hotel: "e.g. The room looks nice but I hate tiny bathrooms.",
-  flight: "e.g. I hate early morning flights.",
+  trip: "e.g. I care about scenery more than museums, and the bathroom needs to be genuinely clean.",
+  hotel: "e.g. The room looks lovely but I hate tiny bathrooms.",
+  flight: "e.g. I really dislike early morning flights.",
   transport: "e.g. I don't mind long drives if they're scenic.",
   place: "e.g. This looks great — find more like it.",
-  itinerary: "e.g. I don't want to change hotels every night.",
-  food: "e.g. Good food but not expensive restaurants.",
-  destination: "e.g. Focus on the high-altitude scenery.",
+  itinerary: "e.g. I'd rather not change hotels every night.",
+  food: "e.g. Good food, but nothing too fancy.",
+  destination: "e.g. Lean into the mountain scenery.",
   activity: "e.g. Keep this, but I'd rather not walk far.",
-  stage: "Anything you write here will influence what we investigate next.",
+  stage: "Tell us what you're imagining.",
 };
 
 export function SteeringBox({
   scope,
   entityId,
-  title = "Shape the investigation",
+  title = "Tell us what you're imagining",
   compact = false,
 }: {
   scope: SignalScope;
@@ -44,14 +43,14 @@ export function SteeringBox({
   }
 
   return (
-    <div className={cx("rounded-2xl border border-alpine-500/20 bg-alpine-500/[0.04] p-4", compact && "p-3")}>
+    <div className={cx("rounded-2xl border border-brand/25 bg-brand/[0.05] p-4", compact && "p-3")}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-alpine-300">🎙️</span>
-        <span className="text-sm font-semibold text-paper-50">{title}</span>
+        <span className="text-brand">✎</span>
+        <span className="text-sm font-semibold text-ink">{title}</span>
       </div>
       {!compact && (
-        <p className="mb-3 text-xs leading-relaxed text-paper-200/60">
-          Anything you tell the agents here will influence what they investigate and prioritize next.
+        <p className="mb-3 text-xs leading-relaxed text-ink-soft">
+          Anything you note here gently guides what we look into next.
         </p>
       )}
       <div className="flex items-end gap-2">
@@ -63,10 +62,10 @@ export function SteeringBox({
           }}
           rows={compact ? 2 : 3}
           placeholder={PLACEHOLDERS[scope] ?? PLACEHOLDERS.stage}
-          className="min-h-[44px] flex-1 resize-none rounded-xl border border-white/10 bg-ink-900/60 px-3.5 py-2.5 text-sm text-paper-50 outline-none transition placeholder:text-paper-200/30 focus:border-alpine-400/50"
+          className="min-h-[44px] flex-1 resize-none rounded-xl border border-line bg-paper px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint/70 focus:border-brand/50"
         />
         <button onClick={submit} disabled={!text.trim()} className="btn-primary !px-4 !py-2.5">
-          Steer →
+          Note it
         </button>
       </div>
 
@@ -79,23 +78,8 @@ export function SteeringBox({
             className="mt-3 space-y-2 overflow-hidden"
           >
             {acked.map((s) => (
-              <div key={s.id} className="rounded-xl border border-alpine-400/25 bg-alpine-500/[0.06] p-3">
-                <div className="mb-1.5 flex items-center gap-2">
-                  <span className="chip !border-alpine-400/30 !bg-alpine-500/10 !text-alpine-200 !text-[10px] uppercase tracking-wide">
-                    {s.category}
-                  </span>
-                  <span className="text-[11px] text-paper-200/50">→ {s.scope}</span>
-                </div>
-                <p className="text-sm text-paper-100">{s.interpretation}</p>
-                {s.affectedAgents.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {s.affectedAgents.map((a) => (
-                      <span key={a} className="inline-flex items-center gap-1 text-[11px] text-paper-200/60">
-                        {AGENTS[a].glyph} {AGENTS[a].name}
-                      </span>
-                    ))}
-                  </div>
-                )}
+              <div key={s.id} className="rounded-xl border border-brand/25 bg-card p-3">
+                <p className="text-sm text-ink">{s.interpretation}</p>
               </div>
             ))}
           </motion.div>

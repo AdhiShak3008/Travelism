@@ -27,33 +27,27 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
   const bathroomImg = hotel.images.find((im) => im.category === "bathroom");
 
   return (
-    <motion.div
-      layout
-      className={cx(
-        "overflow-hidden rounded-2xl border bg-ink-800/60",
-        selected ? "border-alpine-400/40 shadow-glow" : "border-white/[0.06]"
-      )}
-    >
+    <motion.div layout className={cx("overflow-hidden rounded-2xl border bg-card", selected ? "border-brand shadow-lift ring-1 ring-brand/30" : "border-line shadow-card")}>
       <div className="grid gap-0 md:grid-cols-[280px_1fr]">
-        {/* Media */}
-        <div className="relative aspect-[4/3] md:aspect-auto">
-          <Image src={hotel.images[0]?.url} alt={hotel.name} fill sizes="280px" className="object-cover" unoptimized />
-          {locked && (
-            <span className="absolute left-3 top-3 chip !border-aurora-400/40 !bg-black/50 !text-aurora-300 backdrop-blur">🔒 Locked</span>
+        <div className="relative aspect-[4/3] bg-paper-2 md:aspect-auto">
+          {hotel.images[0]?.url ? (
+            <Image src={hotel.images[0].url} alt={hotel.name} fill sizes="280px" className="object-cover" unoptimized />
+          ) : (
+            <div className="grid h-full place-items-center text-3xl">🏨</div>
           )}
+          {locked && <span className="stamp absolute left-3 top-3 !border-terra/60 !text-terra !bg-white/85 backdrop-blur">Kept</span>}
         </div>
 
-        {/* Body */}
         <div className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="font-display text-xl font-semibold text-paper-50">{hotel.name}</h3>
-              <p className="text-sm text-paper-200/60">{hotel.location}</p>
-              <p className="mt-1 text-sm text-paper-200/50">{hotel.room}</p>
+              <h3 className="display text-xl font-semibold text-ink">{hotel.name}</h3>
+              <p className="text-sm text-ink-soft">{hotel.location}</p>
+              <p className="mt-1 text-sm text-ink-faint">{hotel.room}</p>
             </div>
             <div className="text-right">
-              <div className="font-display text-2xl font-semibold text-paper-50">{inr(hotel.pricePerNight)}</div>
-              <div className="text-xs text-paper-200/50">per night</div>
+              <div className="display text-2xl font-semibold text-ink">{inr(hotel.pricePerNight)}</div>
+              <div className="text-xs text-ink-faint">per night</div>
             </div>
           </div>
 
@@ -72,7 +66,7 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-4">
               <WhyThis
-                title="Why we picked this hotel"
+                title="Why we chose this stay"
                 reasons={hotel.whyReasons}
                 basis={[`${intel?.count ?? 0} reviews`, `${hotel.images.length} photos`, `${hotel.sourceIds.length} sources`]}
                 confidence={hotel.confidence}
@@ -80,19 +74,14 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
               <SourceChips sourceIds={hotel.sourceIds} />
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => toggleLock(hotel.id)}
-                className={cx("btn-ghost !py-2", locked && "!border-aurora-400/40 !text-aurora-300")}
-              >
-                {locked ? "🔒 Locked" : "Lock"}
+              <button onClick={() => toggleLock(hotel.id)} className={cx("btn-ghost !py-2", locked && "!border-terra/50 !text-terra")}>
+                {locked ? "🔒 Kept" : "Keep"}
               </button>
               {!selected && (
-                <button onClick={() => chooseHotel(hotel)} className="btn-primary !py-2">
-                  Select
-                </button>
+                <button onClick={() => chooseHotel(hotel)} className="btn-primary !py-2">Choose</button>
               )}
               <button onClick={() => setExpanded((e) => !e)} className="btn-ghost !py-2">
-                {expanded ? "Less" : "Evidence"}
+                {expanded ? "Less" : "Details"}
               </button>
             </div>
           </div>
@@ -101,75 +90,51 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
 
       <AnimatePresence>
         {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden border-t border-white/[0.06]"
-          >
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-t border-line">
             <div className="space-y-5 p-5">
-              {/* Photo evidence incl. bathroom */}
               <div>
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-paper-200/50">
-                  Photo evidence {bathroomImg ? "(incl. bathroom)" : ""}
-                </div>
+                <div className="mb-2 label-eyebrow">Photos {bathroomImg ? "(incl. bathroom)" : ""}</div>
                 <div className="no-scrollbar flex gap-2 overflow-x-auto">
                   {hotel.images.map((im) => (
-                    <div key={im.id} className="relative h-28 w-40 shrink-0 overflow-hidden rounded-lg">
+                    <div key={im.id} className="relative h-28 w-40 shrink-0 overflow-hidden rounded-lg border border-line">
                       <Image src={im.url} alt={im.category} fill sizes="160px" className="object-cover" unoptimized />
-                      <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] uppercase text-white/80">
-                        {im.category} · {im.provenance}
-                      </span>
                     </div>
                   ))}
                 </div>
-                {!bathroomImg && (
-                  <p className="mt-2 text-xs text-signal-warn">No reliable recent bathroom photos found.</p>
-                )}
+                {!bathroomImg && <p className="mt-2 text-xs text-warn">No reliable recent bathroom photos found.</p>}
               </div>
 
               {intel && <ReviewIntelCard intel={intel} />}
-
               {videos.length > 0 && <VideoRow videos={videos} title="Room tour & guest reviews" />}
 
-              <div className="rounded-xl border border-white/[0.06] bg-ink-850/60 p-4">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-paper-200/50">Policies</div>
-                <ul className="space-y-1 text-sm text-paper-100">
+              <div className="rounded-xl border border-line bg-paper-2 p-4">
+                <div className="mb-2 label-eyebrow">Good to know</div>
+                <ul className="space-y-1 text-sm text-ink">
                   {hotel.policies.map((p, i) => (
                     <li key={i}>· {p}</li>
                   ))}
                 </ul>
               </div>
 
-              {/* Alternatives */}
               <div>
-                <button onClick={() => setShowAlts((s) => !s)} className="text-sm font-semibold text-alpine-300">
-                  {showAlts ? "Hide alternatives" : `Compare ${alts.length} alternatives`}
+                <button onClick={() => setShowAlts((s) => !s)} className="text-sm font-semibold text-brand hover:underline">
+                  {showAlts ? "Hide other stays" : `See ${alts.length} other stays`}
                 </button>
                 <AnimatePresence>
                   {showAlts && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="mt-3 space-y-2 overflow-hidden"
-                    >
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-3 space-y-2 overflow-hidden">
                       {alts.map((alt) => (
-                        <div key={alt.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-ink-850/60 p-3">
+                        <div key={alt.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-paper-2 p-3">
                           <div className="flex items-center gap-3">
-                            <div className="relative h-12 w-16 overflow-hidden rounded-lg">
-                              <Image src={alt.images[0]?.url} alt={alt.name} fill sizes="64px" className="object-cover" unoptimized />
+                            <div className="relative h-12 w-16 overflow-hidden rounded-lg bg-paper-3">
+                              {alt.images[0]?.url && <Image src={alt.images[0].url} alt={alt.name} fill sizes="64px" className="object-cover" unoptimized />}
                             </div>
                             <div>
-                              <div className="text-sm font-semibold text-paper-50">{alt.name}</div>
-                              <div className="text-xs text-paper-200/50">
-                                Clean {alt.cleanliness} · Bath {alt.bathroomScore} · {inr(alt.pricePerNight)}/night
-                              </div>
+                              <div className="text-sm font-semibold text-ink">{alt.name}</div>
+                              <div className="text-xs text-ink-faint">Clean {alt.cleanliness} · Bath {alt.bathroomScore} · {inr(alt.pricePerNight)}/night</div>
                             </div>
                           </div>
-                          <button onClick={() => chooseHotel(alt, selected ? hotel.id : undefined)} className="btn-ghost !py-1.5 !text-xs">
-                            Switch
-                          </button>
+                          <button onClick={() => chooseHotel(alt, selected ? hotel.id : undefined)} className="btn-ghost !py-1.5 !text-xs">Switch</button>
                         </div>
                       ))}
                     </motion.div>
@@ -177,7 +142,7 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
                 </AnimatePresence>
               </div>
 
-              <SteeringBox scope="hotel" entityId={hotel.id} title="Comment on this hotel" compact />
+              <SteeringBox scope="hotel" entityId={hotel.id} title="Tell us about this stay" compact />
             </div>
           </motion.div>
         )}

@@ -21,16 +21,19 @@ export const metadata: Metadata = {
     "Brief an intelligent travel intelligence team. Watch them investigate, then assemble a complete, evidence-backed trip.",
 };
 
+import { themeInitScript } from "@/components/ThemeToggle";
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${fraunces.variable}`}>
-      <body className="min-h-screen bg-ink-950 font-sans text-paper-100 antialiased">
-        {children}
-      </body>
+    <html lang="en" className={`${inter.variable} ${fraunces.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-screen bg-paper font-sans text-ink antialiased">{children}</body>
     </html>
   );
 }

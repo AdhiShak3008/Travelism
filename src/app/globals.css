@@ -2,19 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   TRAVELISM — "physical travel brochure" theme system.
+   Light = warm cream paper. Dark = rich leather lookbook.
+   All colors are CSS variables so both themes share one token vocabulary.
+   ========================================================================== */
+
 :root {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces", "Playfair Display", Georgia, serif;
+
+  /* LIGHT — cream paper brochure */
+  --paper: 42 38% 96%;          /* page background */
+  --paper-2: 40 33% 92%;        /* raised surface */
+  --paper-3: 38 30% 88%;        /* deeper surface */
+  --card: 40 45% 98%;           /* card face */
+  --ink: 28 22% 14%;            /* primary text (warm near-black) */
+  --ink-soft: 28 12% 34%;       /* secondary text */
+  --ink-faint: 30 10% 52%;      /* tertiary */
+  --line: 30 20% 82%;           /* hairline rules */
+  --line-strong: 30 18% 72%;
+
+  --brand: 176 58% 32%;         /* deep travel teal */
+  --brand-soft: 176 45% 42%;
+  --terra: 18 72% 52%;          /* terracotta accent */
+  --gold: 38 62% 48%;           /* muted gold (stamps) */
+
+  --good: 152 46% 40%;
+  --warn: 32 80% 46%;
+  --bad: 4 68% 52%;
+
+  --shadow-card: 0 1px 2px rgba(60, 40, 20, 0.06), 0 12px 30px -14px rgba(60, 40, 20, 0.22);
+  --shadow-lift: 0 24px 60px -22px rgba(50, 34, 16, 0.35);
+  --grain-opacity: 0.5;
+}
+
+.dark {
+  /* DARK — leather / candlelit lookbook */
+  --paper: 28 16% 8%;
+  --paper-2: 26 14% 11%;
+  --paper-3: 26 12% 15%;
+  --card: 26 14% 12%;
+  --ink: 40 30% 92%;
+  --ink-soft: 38 14% 72%;
+  --ink-faint: 36 10% 54%;
+  --line: 34 12% 24%;
+  --line-strong: 34 12% 32%;
+
+  --brand: 172 52% 52%;
+  --brand-soft: 172 44% 60%;
+  --terra: 20 78% 60%;
+  --gold: 40 68% 58%;
+
+  --good: 152 50% 55%;
+  --warn: 38 85% 60%;
+  --bad: 4 78% 64%;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 34px -16px rgba(0, 0, 0, 0.7);
+  --shadow-lift: 0 28px 70px -24px rgba(0, 0, 0, 0.8);
+  --grain-opacity: 0.35;
 }
 
 html,
 body {
   padding: 0;
   margin: 0;
-  background: #08090c;
-  color: #eef1f6;
+  background: hsl(var(--paper));
+  color: hsl(var(--ink));
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  transition: background-color 0.4s ease, color 0.3s ease;
 }
 
 * {
@@ -22,52 +79,110 @@ body {
 }
 
 ::selection {
-  background: rgba(63, 214, 189, 0.28);
+  background: hsl(var(--brand) / 0.22);
 }
 
-/* Refined scrollbars */
+/* Paper grain — subtle tactile texture layered over the whole page */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+.dark body::before {
+  mix-blend-mode: overlay;
+}
+
+/* keep app content above the grain layer */
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #232b3d;
+  background: hsl(var(--line-strong));
   border-radius: 999px;
-  border: 2px solid #08090c;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #2f3a52;
+  border: 3px solid hsl(var(--paper));
 }
 
 @layer components {
-  .glass {
-    background: rgba(20, 24, 34, 0.72);
-    backdrop-filter: blur(18px) saturate(140%);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-  }
   .card {
-    @apply rounded-2xl border border-white/[0.06] bg-ink-800/60 shadow-soft;
+    @apply rounded-2xl border;
+    background: hsl(var(--card));
+    border-color: hsl(var(--line));
+    box-shadow: var(--shadow-card);
+  }
+  .surface {
+    background: hsl(var(--paper-2));
+    border: 1px solid hsl(var(--line));
   }
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs font-medium text-paper-200;
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium;
+    border: 1px solid hsl(var(--line-strong));
+    background: hsl(var(--paper-2));
+    color: hsl(var(--ink-soft));
+  }
+  /* a "stamp" — the little ticket/postmark motif */
+  .stamp {
+    @apply inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider;
+    border: 1px dashed hsl(var(--gold) / 0.7);
+    color: hsl(var(--gold));
+    background: hsl(var(--gold) / 0.08);
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-alpine-500 px-5 py-3 text-sm font-semibold text-ink-950 transition hover:bg-alpine-400 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none;
+    background: hsl(var(--brand));
+    color: hsl(42 38% 97%);
+    box-shadow: 0 8px 20px -10px hsl(var(--brand) / 0.6);
+  }
+  .btn-primary:hover {
+    background: hsl(var(--brand-soft));
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-sm font-medium text-paper-100 transition hover:bg-white/[0.06] active:scale-[0.98];
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium transition active:scale-[0.98];
+    border: 1px solid hsl(var(--line-strong));
+    color: hsl(var(--ink));
+    background: transparent;
+  }
+  .btn-ghost:hover {
+    background: hsl(var(--paper-2));
   }
   .label-eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.22em] text-alpine-300/80;
+    @apply text-[11px] font-semibold uppercase tracking-[0.28em];
+    color: hsl(var(--brand));
   }
-  .surface-grid {
-    background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
-    background-size: 32px 32px;
+  .hairline {
+    border-color: hsl(var(--line));
+  }
+  .display {
+    font-family: var(--font-display);
   }
 }
+
+/* text color utilities bound to tokens */
+.text-ink { color: hsl(var(--ink)); }
+.text-ink-soft { color: hsl(var(--ink-soft)); }
+.text-ink-faint { color: hsl(var(--ink-faint)); }
+.text-brand { color: hsl(var(--brand)); }
+.text-terra { color: hsl(var(--terra)); }
+.text-gold { color: hsl(var(--gold)); }
+.text-good { color: hsl(var(--good)); }
+.text-warn { color: hsl(var(--warn)); }
+.text-bad { color: hsl(var(--bad)); }
+.bg-paper { background: hsl(var(--paper)); }
+.bg-paper-2 { background: hsl(var(--paper-2)); }
+.bg-card { background: hsl(var(--card)); }
 
 .shimmer {
   position: relative;
@@ -78,14 +193,10 @@ body {
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  background: linear-gradient(90deg, transparent, hsl(var(--ink) / 0.05), transparent);
   animation: shimmer 1.8s infinite;
 }
+@keyframes shimmer { 100% { transform: translateX(100%); } }
 
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

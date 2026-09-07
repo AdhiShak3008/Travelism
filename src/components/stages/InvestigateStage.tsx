@@ -1,82 +1,119 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { cx } from "@/lib/format";
+
+// Warm, human-worded lines shown to travellers — no agent jargon by default.
+const FRIENDLY_LINES = [
+  "Getting to know the place…",
+  "Finding the spots worth your time…",
+  "Reading what recent travellers say…",
+  "Looking for clean, comfortable stays…",
+  "Checking the best time to go…",
+  "Sniffing out the good food…",
+  "Sorting out permits and paperwork…",
+  "Pulling it all together…",
+];
 
 export function InvestigateStage() {
   const agents = useTrip((s) => s.agents);
   const destination = useTrip((s) => s.blob.destinationName);
+  const [showBehind, setShowBehind] = useState(false);
+  const [lineIdx, setLineIdx] = useState(0);
 
-  const active = agents.filter((a) => a.phase === "working");
   const done = agents.filter((a) => a.phase === "done").length;
+  const total = agents.length;
+  const pct = Math.round((done / Math.max(1, total)) * 100);
+
+  useEffect(() => {
+    const t = setInterval(() => setLineIdx((i) => (i + 1) % FRIENDLY_LINES.length), 2600);
+    return () => clearInterval(t);
+  }, []);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-12">
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-        <div className="label-eyebrow mb-2">Building your trip</div>
-        <h1 className="font-display text-4xl font-semibold tracking-tight text-paper-50">
-          The team is investigating {destination}
+    <div className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-6 py-12">
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-center">
+        <div className="stamp mx-auto mb-5">Putting your trip together</div>
+        <h1 className="display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
+          Looking into {destination || "your trip"}
         </h1>
-        <p className="mt-2 text-paper-200/60">
-          {active.length > 0
-            ? `${active.map((a) => a.name).join(", ")} working now…`
-            : done === agents.length
-            ? "Assembling your Trip Blob…"
-            : "Assigning agents based on what you told us…"}
-        </p>
+
+        {/* Rotating friendly line */}
+        <div className="mt-4 h-7">
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={lineIdx}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.4 }}
+              className="text-ink-soft"
+            >
+              {FRIENDLY_LINES[lineIdx]}
+            </motion.p>
+          </AnimatePresence>
+        </div>
       </motion.div>
 
-      <div className="mt-8 space-y-2">
-        {agents.map((a) => (
+      {/* Calm progress bar */}
+      <div className="mt-8">
+        <div className="h-1.5 overflow-hidden rounded-full bg-paper-3">
+          <motion.div className="h-full rounded-full bg-brand" animate={{ width: `${Math.max(8, pct)}%` }} transition={{ ease: "easeOut" }} />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-xs text-ink-faint">
+          <span>This usually takes under a minute</span>
+          <button onClick={() => setShowBehind((s) => !s)} className="font-medium text-brand hover:underline">
+            {showBehind ? "Hide the details" : "Peek behind the scenes"}
+          </button>
+        </div>
+      </div>
+
+      {/* Behind-the-scenes: the actual agent activity, opt-in */}
+      <AnimatePresence>
+        {showBehind && (
           <motion.div
-            layout
-            key={a.id}
-            className={cx(
-              "flex items-center gap-3 rounded-xl border px-4 py-3 transition",
-              a.phase === "working"
-                ? "border-alpine-400/40 bg-alpine-500/[0.06]"
-                : a.phase === "done"
-                ? "border-white/[0.06] bg-ink-800/40"
-                : "border-white/[0.04] bg-ink-900/30"
-            )}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-6 space-y-1.5 overflow-hidden"
           >
-            <span className="text-xl">{a.glyph}</span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-paper-50">{a.name}</span>
-                {a.priority > 0.8 && a.phase !== "done" && (
-                  <span className="chip !border-alpine-400/30 !bg-alpine-500/10 !text-alpine-200 !text-[10px]">priority</span>
+            {agents.map((a) => (
+              <div
+                key={a.id}
+                className={cx(
+                  "flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-sm transition",
+                  a.phase === "working" ? "border-brand/40 bg-brand/[0.05]" : "border-line bg-paper-2"
+                )}
+              >
+                <span>{a.glyph}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-medium text-ink">{a.name}</span>
+                  <span className="ml-2 text-ink-soft">{a.status}</span>
+                </div>
+                {a.metric && a.phase === "done" && <span className="text-xs text-ink-faint">{a.metric}</span>}
+                {a.phase === "done" ? (
+                  <span className="text-good">✓</span>
+                ) : a.phase === "working" ? (
+                  <span className="flex gap-1">
+                    {[0, 1, 2].map((i) => (
+                      <motion.span
+                        key={i}
+                        className="h-1.5 w-1.5 rounded-full bg-brand"
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{ duration: 1, repeat: Infinity, delay: i * 0.18 }}
+                      />
+                    ))}
+                  </span>
+                ) : (
+                  <span className="h-1.5 w-1.5 rounded-full bg-line-strong" />
                 )}
               </div>
-              <div className="text-xs text-paper-200/60">{a.status}</div>
-            </div>
-            {a.metric && a.phase === "done" && (
-              <span className="text-xs text-paper-200/50">{a.metric}</span>
-            )}
-            <AgentIndicator phase={a.phase} />
+            ))}
           </motion.div>
-        ))}
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
-}
-
-function AgentIndicator({ phase }: { phase: string }) {
-  if (phase === "done")
-    return <span className="grid h-5 w-5 place-items-center rounded-full bg-signal-good/20 text-xs text-signal-good">✓</span>;
-  if (phase === "working")
-    return (
-      <span className="flex gap-1">
-        {[0, 1, 2].map((i) => (
-          <motion.span
-            key={i}
-            className="h-1.5 w-1.5 rounded-full bg-alpine-400"
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1, repeat: Infinity, delay: i * 0.18 }}
-          />
-        ))}
-      </span>
-    );
-  return <span className="h-1.5 w-1.5 rounded-full bg-white/15" />;
 }

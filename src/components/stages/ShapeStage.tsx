@@ -8,10 +8,10 @@ import { SectionTitle } from "@/components/ui/Primitives";
 import type { Preferences } from "@/lib/types";
 import { cx } from "@/lib/format";
 
-const PACES: { key: Preferences["pace"]; label: string; desc: string; mult: number }[] = [
-  { key: "comfortable", label: "Comfortable", desc: "Fewer, richer experiences. Space to breathe.", mult: 1.25 },
-  { key: "balanced", label: "Balanced", desc: "A steady rhythm with room for the unexpected.", mult: 1.0 },
-  { key: "fast", label: "Fast-paced", desc: "See as much as realistically possible.", mult: 0.82 },
+const PACES: { key: Preferences["pace"]; label: string; desc: string }[] = [
+  { key: "comfortable", label: "Easy does it", desc: "Fewer, richer days. Room to breathe." },
+  { key: "balanced", label: "Just right", desc: "A steady rhythm with a little slack." },
+  { key: "fast", label: "See it all", desc: "As much as realistically fits." },
 ];
 
 export function ShapeStage() {
@@ -29,23 +29,22 @@ export function ShapeStage() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
       <SectionTitle
-        eyebrow="Trip shape"
-        title="How long, and at what pace?"
-        hint={`Your ${selected.length} selected place${selected.length !== 1 ? "s" : ""} currently need about ${needed} days including realistic travel time.`}
+        eyebrow="Your trip, shaped"
+        title="How long, and how relaxed?"
+        hint={`Your ${selected.length} pick${selected.length !== 1 ? "s" : ""} comfortably fill about ${needed} days once we count the travel.`}
       />
 
-      {/* Duration */}
       <div className="card p-6">
         <div className="flex items-center justify-between">
           <div>
-            <div className="label-eyebrow mb-1">Trip duration</div>
-            <div className="font-display text-4xl font-semibold text-paper-50">
-              {blob.durationDays} <span className="text-lg text-paper-200/60">days</span>
+            <div className="label-eyebrow mb-1">How many days</div>
+            <div className="display text-4xl font-semibold text-ink">
+              {blob.durationDays} <span className="text-lg text-ink-faint">days</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setDuration(blob.durationDays - 1)} className="grid h-11 w-11 place-items-center rounded-xl border border-white/10 text-xl hover:bg-white/[0.06]">−</button>
-            <button onClick={() => setDuration(blob.durationDays + 1)} className="grid h-11 w-11 place-items-center rounded-xl border border-white/10 text-xl hover:bg-white/[0.06]">+</button>
+            <button onClick={() => setDuration(blob.durationDays - 1)} className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-xl text-ink hover:bg-paper-2">−</button>
+            <button onClick={() => setDuration(blob.durationDays + 1)} className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-xl text-ink hover:bg-paper-2">+</button>
           </div>
         </div>
         <input
@@ -54,30 +53,28 @@ export function ShapeStage() {
           max={16}
           value={blob.durationDays}
           onChange={(e) => setDuration(Number(e.target.value))}
-          className="mt-5 w-full accent-alpine-500"
+          className="mt-5 w-full accent-[hsl(var(--brand))]"
         />
         {blob.durationDays < needed && (
-          <div className="mt-3 rounded-lg border border-signal-warn/20 bg-signal-warn/[0.06] px-3 py-2 text-xs text-signal-warn">
-            ⚠ Your selection realistically needs ~{needed} days. At {blob.durationDays} days it will feel rushed — add a day or drop a place.
+          <div className="mt-3 rounded-lg border border-warn/30 bg-warn/[0.08] px-3 py-2 text-xs text-warn">
+            Heads up: your picks really want ~{needed} days. At {blob.durationDays} it&rsquo;ll feel rushed — add a day or drop a stop.
           </div>
         )}
       </div>
 
-      {/* Travelers */}
       <div className="card mt-5 flex items-center justify-between p-6">
         <div>
-          <div className="label-eyebrow mb-1">Travellers</div>
-          <div className="font-display text-2xl font-semibold text-paper-50">{blob.travelers}</div>
+          <div className="label-eyebrow mb-1">Who&rsquo;s going</div>
+          <div className="display text-2xl font-semibold text-ink">{blob.travelers} {blob.travelers > 1 ? "travellers" : "traveller"}</div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setTravelers(blob.travelers - 1)} className="grid h-11 w-11 place-items-center rounded-xl border border-white/10 text-xl hover:bg-white/[0.06]">−</button>
-          <button onClick={() => setTravelers(blob.travelers + 1)} className="grid h-11 w-11 place-items-center rounded-xl border border-white/10 text-xl hover:bg-white/[0.06]">+</button>
+          <button onClick={() => setTravelers(blob.travelers - 1)} className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-xl text-ink hover:bg-paper-2">−</button>
+          <button onClick={() => setTravelers(blob.travelers + 1)} className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-xl text-ink hover:bg-paper-2">+</button>
         </div>
       </div>
 
-      {/* Pace */}
       <div className="mt-6">
-        <div className="label-eyebrow mb-3">Choose your pace</div>
+        <div className="label-eyebrow mb-3">Your pace</div>
         <div className="grid gap-3 sm:grid-cols-3">
           {PACES.map((p) => (
             <motion.button
@@ -86,14 +83,12 @@ export function ShapeStage() {
               onClick={() => setPace(p.key)}
               className={cx(
                 "rounded-2xl border p-4 text-left transition",
-                blob.preferences.pace === p.key
-                  ? "border-alpine-400/50 bg-alpine-500/[0.08] shadow-glow"
-                  : "border-white/[0.06] bg-ink-800/50 hover:border-white/15"
+                blob.preferences.pace === p.key ? "border-brand bg-brand/[0.06] shadow-card" : "border-line bg-card hover:border-line-strong"
               )}
             >
-              <div className="font-display text-base font-semibold text-paper-50">{p.label}</div>
-              <p className="mt-1 text-sm text-paper-200/60">{p.desc}</p>
-              <div className="mt-3 text-xs text-alpine-300">≈ {estimateDaysForPlaces(selected, p.key)} days</div>
+              <div className="display text-base font-semibold text-ink">{p.label}</div>
+              <p className="mt-1 text-sm text-ink-soft">{p.desc}</p>
+              <div className="mt-3 text-xs text-brand">≈ {estimateDaysForPlaces(selected, p.key)} days</div>
             </motion.button>
           ))}
         </div>
@@ -105,7 +100,7 @@ export function ShapeStage() {
 
       <div className="mt-6 flex justify-between">
         <button onClick={() => setStage("reveal")} className="btn-ghost">← Back to places</button>
-        <button onClick={() => setStage("mood")} className="btn-primary">Set travel mood →</button>
+        <button onClick={() => setStage("mood")} className="btn-primary">Next: your vibe →</button>
       </div>
     </div>
   );
