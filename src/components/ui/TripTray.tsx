@@ -7,15 +7,19 @@ import { estimateDaysForPlaces } from "@/lib/engine";
 export function TripTray({ onContinue }: { onContinue: () => void }) {
   const dataset = useTrip((s) => s.dataset);
   const selectedIds = useTrip((s) => s.blob.selectedPlaceIds);
+  const selectedExpIds = useTrip((s) => s.blob.selectedExperienceIds);
   const toggle = useTrip((s) => s.toggleSelectPlace);
+  const toggleExp = useTrip((s) => s.toggleExperience);
   const pace = useTrip((s) => s.blob.preferences.pace);
 
   const places = dataset?.places.filter((p) => selectedIds.includes(p.id)) ?? [];
+  const exps = dataset?.experiences.filter((e) => selectedExpIds.includes(e.id)) ?? [];
   const days = estimateDaysForPlaces(places, pace);
+  const hasAny = places.length > 0 || exps.length > 0;
 
   return (
     <AnimatePresence>
-      {places.length > 0 && (
+      {hasAny && (
         <motion.div
           initial={{ y: 80, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -39,9 +43,21 @@ export function TripTray({ onContinue }: { onContinue: () => void }) {
                       className="group flex shrink-0 items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 py-1 pl-3 pr-2 text-sm text-ink"
                     >
                       {p.canonicalName}
-                      <span className="grid h-4 w-4 place-items-center rounded-full bg-line-strong text-[10px] group-hover:bg-bad/40">
-                        ×
-                      </span>
+                      <span className="grid h-4 w-4 place-items-center rounded-full bg-line-strong text-[10px] group-hover:bg-bad/40">×</span>
+                    </motion.button>
+                  ))}
+                  {exps.map((e) => (
+                    <motion.button
+                      layout
+                      key={e.id}
+                      initial={{ scale: 0.6, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.6, opacity: 0 }}
+                      onClick={() => toggleExp(e.id)}
+                      className="group flex shrink-0 items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 py-1 pl-3 pr-2 text-sm text-ink"
+                    >
+                      🎟️ {e.name}
+                      <span className="grid h-4 w-4 place-items-center rounded-full bg-line-strong text-[10px] group-hover:bg-bad/40">×</span>
                     </motion.button>
                   ))}
                 </AnimatePresence>
@@ -51,7 +67,8 @@ export function TripTray({ onContinue }: { onContinue: () => void }) {
             <div className="flex items-center justify-between gap-4 border-t border-line pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
               <div className="text-right">
                 <div className="text-sm font-semibold text-ink">
-                  {places.length} place{places.length > 1 ? "s" : ""}
+                  {places.length} place{places.length !== 1 ? "s" : ""}
+                  {exps.length > 0 && ` · ${exps.length} to do`}
                 </div>
                 <div className="text-xs text-ink-faint">≈ {days} days incl. travel</div>
               </div>

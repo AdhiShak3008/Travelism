@@ -8,6 +8,7 @@ import { PlaceCard } from "@/components/ui/PlaceCard";
 import { TripTray } from "@/components/ui/TripTray";
 import { RefineBox } from "@/components/ui/RefineBox";
 import { VideoRow } from "@/components/ui/VideoRow";
+import { ExperienceCard } from "@/components/ui/ExperienceCard";
 import { SectionTitle } from "@/components/ui/Primitives";
 import type { PlaceCategory } from "@/lib/types";
 
@@ -23,7 +24,7 @@ export function RevealStage() {
   const [tab, setTab] = useState<PlaceCategory>("core");
 
   if (!dataset) return null;
-  const { meta, places, videos } = dataset;
+  const { meta, places, videos, experiences } = dataset;
   const destVideos = videos.filter((v) => v.relatesTo.startsWith("dest_"));
 
   return (
@@ -89,6 +90,21 @@ export function RevealStage() {
               ))}
           </motion.div>
         </div>
+
+        {experiences.length > 0 && (
+          <div className="mt-12">
+            <SectionTitle
+              eyebrow="Things to do"
+              title="Bookable experiences"
+              hint="Paragliding, tickets, tours, safaris and more — each with its own cost. Add any and it drops into your trip and its price into the total."
+            />
+            <motion.div layout className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {experiences.map((e) => (
+                <ExperienceCard key={e.id} exp={e} />
+              ))}
+            </motion.div>
+          </div>
+        )}
 
         <div className="mt-10">
           <RefineBox />

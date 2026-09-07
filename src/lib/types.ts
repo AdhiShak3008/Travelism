@@ -293,6 +293,39 @@ export interface Permit {
   sourceIds: string[];
 }
 
+export type ExperienceCategory =
+  | "theme_park"
+  | "water"
+  | "adventure"
+  | "wildlife"
+  | "tour"
+  | "cultural"
+  | "wellness"
+  | "food_exp"
+  | "nightlife";
+
+export interface Experience {
+  id: string;
+  name: string;
+  category: ExperienceCategory;
+  blurb: string;
+  description?: string;
+  price: number; // in INR (per person unless perPerson=false)
+  priceNote?: string; // e.g. "ticket only", "incl. gear", "estimated"
+  perPerson: boolean;
+  durationHours?: number;
+  difficulty?: Difficulty;
+  familyFriendly?: boolean;
+  minAge?: number;
+  location?: string;
+  images: MediaImage[];
+  whyRecommended?: string;
+  bookingHint?: string;
+  sourceIds: string[];
+  estimated: boolean;
+  confidence: number;
+}
+
 export interface FoodPick {
   id: string;
   name: string;
@@ -447,6 +480,7 @@ export interface TripBlob {
   preferences: Preferences;
 
   selectedPlaceIds: string[];
+  selectedExperienceIds: string[];
   lockedComponentIds: string[];
   rejectedOptionIds: string[];
 
@@ -459,6 +493,7 @@ export interface TripBlob {
   transport: TransportOption[];
   activities: ActivityItem[];
   food: FoodPick[];
+  experiences: Experience[];
   permits: Permit[];
   itinerary: ItineraryDay[];
 

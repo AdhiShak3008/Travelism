@@ -43,10 +43,18 @@ async function wikipediaLeadImage(query: string, signal?: AbortSignal): Promise<
     const pages = data.query?.pages;
     if (!pages) return null;
     const first = Object.values(pages)[0];
-    return first?.original?.source ?? first?.thumbnail?.source ?? null;
+    const url = first?.original?.source ?? first?.thumbnail?.source ?? null;
+    return url && !isBadImage(url) ? url : null;
   } catch {
     return null;
   }
+}
+
+/** Reject flags, logos, maps, coats of arms, SVGs, icons — never scenery. */
+export function isBadImage(url: string): boolean {
+  const u = url.toLowerCase();
+  if (u.endsWith(".svg") || u.includes(".svg?") || u.includes("/svg/")) return true;
+  return /flag|logo|coat[_%20]?of[_%20]?arms|emblem|seal|map|locator|icon|wikimedia_common|orthographic|\.ogg|\.pdf/.test(u);
 }
 
 /** Multiple Commons images for a subject (for galleries). */
@@ -78,7 +86,7 @@ async function commonsImages(query: string, n: number, signal?: AbortSignal): Pr
       const info = p.imageinfo?.[0];
       if (!info) continue;
       const url = info.thumburl ?? info.url;
-      if (!url) continue;
+      if (!url || isBadImage(url)) continue;
       out.push({
         url,
         descriptionUrl: info.descriptionurl ?? url,

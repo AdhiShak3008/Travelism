@@ -574,6 +574,50 @@ export const TAWANG_FOOD: FoodPick[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// EXPERIENCES (bookable things to do, with their own costs)
+// ---------------------------------------------------------------------------
+export const TAWANG_EXPERIENCES: import("../types").Experience[] = [
+  {
+    id: "exp_bumla_permit_ride",
+    name: "Bum La Pass 4x4 border ride",
+    category: "adventure",
+    blurb: "Guided high-altitude drive to the India–China border zone.",
+    price: 6500,
+    priceNote: "per vehicle (shared 5–6 pax)",
+    perPerson: false,
+    durationHours: 6,
+    difficulty: "hard",
+    familyFriendly: false,
+    minAge: 12,
+    location: "Tawang",
+    images: imgSet("road", "road", 1),
+    whyRecommended: "The defining Tawang experience — stark, dramatic and permit-gated.",
+    bookingHint: "Arranged locally via the taxi union a day prior.",
+    sourceIds: ["transport_op", "forum"],
+    estimated: true,
+    confidence: 0.7,
+  },
+  {
+    id: "exp_monastery_prayer",
+    name: "Morning prayers at Tawang Monastery",
+    category: "cultural",
+    blurb: "Sit in on the resident monks' morning chanting.",
+    price: 0,
+    priceNote: "free (donations welcome)",
+    perPerson: true,
+    durationHours: 1.5,
+    difficulty: "easy",
+    familyFriendly: true,
+    location: "Tawang Monastery",
+    images: imgSet("monastery", "attraction", 1),
+    whyRecommended: "A quiet, moving start to the day.",
+    sourceIds: ["ap_tourism"],
+    estimated: false,
+    confidence: 0.85,
+  },
+];
+
 export const TAWANG_META = {
   id: "dest_tawang",
   name: "Tawang",

@@ -6,6 +6,7 @@ import type {
   VideoAsset,
   Permit,
   FoodPick,
+  Experience,
   Source,
   EvidencePacket,
   Conflict,
@@ -23,10 +24,11 @@ import {
   extractReviewIntel,
   extractPermits,
   extractFood,
+  extractExperiences,
   detectConflicts,
 } from "./extract";
 import { searchVideos } from "./youtube";
-import { fetchWikiImages } from "./wikimedia";
+import { fetchWikiImages, isBadImage } from "./wikimedia";
 import { classifySource, recencyWeight, confidenceScore } from "./reliability";
 import { CAP } from "./env";
 
@@ -57,7 +59,22 @@ export async function investigate(
   signal?: AbortSignal
 ): Promise<DestinationDataset> {
   emit({ agent: "concierge", phase: "working", status: "Reading your dream" });
-  const intent = await parseIntent(dream, signal);
+  let intent: Intent;
+  try {
+    intent = await parseIntent(dream, signal);
+  } catch (e) {
+    console.error("[investigate] parseIntent failed, using fallback:", e instanceof Error ? e.message : e);
+    // Minimal fallback: grab a capitalized place-ish token from the dream.
+    const guess = dream.match(/(?:to|in|visit|explore)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)/)?.[1]?.trim();
+    intent = {
+      destination: guess || dream.split(/\s+/).slice(0, 3).join(" "),
+      durationDays: undefined,
+      travelers: undefined,
+      priorities: [],
+      deprioritized: [],
+      accessibilityNeeds: [],
+    };
+  }
   const dest = intent.destination;
   emit({ agent: "concierge", phase: "done", status: `Understood: ${dest}`, metric: intent.priorities.join(", ") || undefined });
 
@@ -112,9 +129,12 @@ export async function investigate(
   }
 
   const bathFocus = intent.priorities.some((p) => /bath|toilet|hygien|clean/i.test(p));
+  // For broad/country destinations, anchor the stay search to a real city
+  // (the gateway) so we don't get empty "hotels in <whole country>" results.
+  const stayLocus = staySearchLocus(dest, intent);
   const hotelQuery = bathFocus
-    ? `best clean hotels in ${dest} with good bathrooms reviews cleanliness`
-    : `best hotels to stay in ${dest} reviews price`;
+    ? `best clean hotels in ${stayLocus} with good bathrooms reviews cleanliness`
+    : `best hotels to stay in ${stayLocus} reviews price`;
 
   // ---- PHASE 1: run ALL discovery+crawl tracks in parallel ----
   emit({ agent: "scout", phase: "working", status: `Mapping ${dest}` });
@@ -122,16 +142,17 @@ export async function investigate(
   emit({ agent: "foodie", phase: "working", status: "Scouting food" });
   emit({ agent: "gatekeeper", phase: "working", status: "Checking permits & documents" });
 
-  const [overviewPages, placePages, hotelPages, foodPages, permitPages] = await Promise.all([
+  const [overviewPages, placePages, hotelPages, foodPages, permitPages, experiencePages] = await Promise.all([
     discoverAndCrawl(`${dest} travel guide things to do overview best time`, 5),
     discoverAndCrawl(`top attractions and places to visit in ${dest} itinerary`, 7),
     discoverAndCrawl(hotelQuery, 6),
     discoverAndCrawl(`best restaurants and local food in ${dest} where to eat`, 4),
     discoverAndCrawl(`permits visa documents required to visit ${dest} entry requirements`, 3),
+    discoverAndCrawl(`things to do in ${dest} tickets price paragliding safari water sports adventure activities tours`, 5),
   ]);
 
   // ---- PHASE 2: run ALL extractions in parallel ----
-  const [overview, extractedPlaces0, extractedHotels, extractedFood, extractedPermits] = await Promise.all([
+  const [overview, extractedPlaces0, extractedHotels, extractedFood, extractedPermits, extractedExperiences] = await Promise.all([
     extractOverview(dest, overviewPages, signal).catch(() => ({} as Awaited<ReturnType<typeof extractOverview>>)),
     extractPlaces(dest, [...overviewPages, ...placePages], signal).catch((e) => {
       console.error("[investigate] extractPlaces failed:", e instanceof Error ? e.message : e);
@@ -140,6 +161,7 @@ export async function investigate(
     extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []),
     extractFood(dest, foodPages, signal).catch(() => []),
     extractPermits(dest, permitPages, signal).catch(() => []),
+    extractExperiences(dest, [...experiencePages, ...placePages], signal).catch(() => []),
   ]);
 
   let extractedPlaces = extractedPlaces0;
@@ -169,7 +191,8 @@ export async function investigate(
   emit({ agent: "lens", phase: "working", status: "Gathering visitor photos" });
   const [rawWikiPlaceImages, heroImgs] = await Promise.all([
     mapLimited(extractedPlaces, 6, (p) => fetchWikiImages(`${p.name} ${dest}`, "attraction", 3, signal).catch(() => [])),
-    fetchWikiImages(dest, "landscape", 1, signal).catch(() => []),
+    // scenery-focused hero query avoids flags/maps for country-level destinations
+    fetchWikiImages(`${dest} landscape scenery`, "landscape", 2, signal).catch(() => []),
   ]);
   // Dedup images across places so two places don't show the same photo.
   const usedImageUrls = new Set<string>();
@@ -318,6 +341,32 @@ export async function investigate(
   }));
   emit({ agent: "foodie", phase: "done", status: "Food scouted", metric: `${food.length} picks` });
 
+  // ---- Experiences (bookable things to do, with prices) ----
+  emit({ agent: "daydreamer", phase: "working", status: "Finding things to do" });
+  const expImages = collectImages([...experiencePages, ...placePages]);
+  const expSourceIds = uniq(experiencePages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 3);
+  const experiences: Experience[] = extractedExperiences.map((e, i) => ({
+    id: `exp_${i}`,
+    name: e.name,
+    category: e.category ?? "tour",
+    blurb: e.blurb || `A popular thing to do in ${dest}.`,
+    description: e.whyRecommended,
+    price: saneExperiencePrice(e.price),
+    priceNote: e.price ? e.priceNote : "estimated",
+    perPerson: e.perPerson ?? true,
+    durationHours: e.durationHours,
+    difficulty: e.difficulty,
+    familyFriendly: e.familyFriendly,
+    minAge: e.minAge,
+    location: e.location ?? dest,
+    images: expImages.slice(i, i + 2),
+    whyRecommended: e.whyRecommended,
+    sourceIds: expSourceIds,
+    estimated: !e.price,
+    confidence: e.price ? 0.7 : 0.5,
+  }));
+  emit({ agent: "daydreamer", phase: "done", status: "Things to do found", metric: `${experiences.length}` });
+
   // ---- GATEKEEPER (extracted in phase 2) ----
   const permits: Permit[] = extractedPermits.map((p, i) => ({
     id: `permit_${i}`,
@@ -360,6 +409,7 @@ export async function investigate(
     transport: buildTransportEstimates(dest, gateway),
     permits,
     food,
+    experiences,
     evidence,
     conflicts,
     sources,
@@ -495,6 +545,26 @@ function estimatePrice(tier?: string): number {
   return tier === "premium" ? 5500 : tier === "economical" ? 1800 : 3000;
 }
 
+// Broad destinations (countries / large regions) need the stay search anchored
+// to a real city, else "hotels in France" returns nothing usable.
+const BROAD_DESTINATIONS = /^(india|france|italy|spain|japan|thailand|indonesia|usa|united states|america|germany|switzerland|nepal|bhutan|sri lanka|vietnam|greece|portugal|australia|canada|brazil|egypt|morocco|turkey|uk|england|scotland|europe|rajasthan|kerala|himachal|himachal pradesh|uttarakhand|karnataka|goa|ladakh|kashmir|northeast india|south india|north india)$/i;
+
+function staySearchLocus(dest: string, intent: Intent): string {
+  void intent;
+  if (BROAD_DESTINATIONS.test(dest.trim())) {
+    return `the most popular tourist city in ${dest}`;
+  }
+  return dest;
+}
+
+/** Guard experience prices; 0 = free (kept), tiny/huge = treat as unknown (0). */
+function saneExperiencePrice(price: number | undefined): number {
+  if (price == null) return 0;
+  if (price === 0) return 0;
+  if (price < 20 || price > 500000) return 0;
+  return Math.round(price);
+}
+
 /** Guard against garbage prices (0, ratings, or values expressed in thousands). */
 function sanePrice(price: number | undefined, tier?: string): number {
   if (price == null || price <= 0) return estimatePrice(tier);
@@ -516,7 +586,7 @@ function collectImages(pages: CrawledPage[]): MediaImage[] {
   const seen = new Set<string>();
   for (const p of pages) {
     for (const url of p.images) {
-      if (seen.has(url)) continue;
+      if (seen.has(url) || isBadImage(url)) continue;
       if (!/\.(jpg|jpeg|png|webp)(\?|$)/i.test(url) && !url.includes("images")) continue;
       seen.add(url);
       const cls = classifySource(p.finalUrl || p.url);

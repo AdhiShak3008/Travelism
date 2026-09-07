@@ -95,6 +95,22 @@ export function computeCosts(blob: TripBlob): CostLine[] {
     });
   }
 
+  // Experiences (bookable things to do) — per-person or per-group
+  const expTotal = (blob.experiences ?? []).reduce(
+    (s, e) => s + (e.perPerson ? e.price * blob.travelers : e.price),
+    0
+  );
+  if (expTotal > 0) {
+    lines.push({
+      id: "cost_experiences",
+      label: "Things to do",
+      amount: expTotal,
+      currency: "INR",
+      status: "estimated",
+      checkedAt: now(),
+    });
+  }
+
   // Food estimate — scales with duration, travelers, and tier
   const perDayPerPerson =
     blob.preferences.budgetTier === "premium" ? 1400 : blob.preferences.budgetTier === "balanced" ? 900 : 650;

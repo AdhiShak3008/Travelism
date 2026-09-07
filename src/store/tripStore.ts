@@ -74,12 +74,14 @@ function emptyBlob(): TripBlob {
     mood: { ...DEFAULT_MOOD },
     preferences: { ...DEFAULT_PREFS },
     selectedPlaceIds: [],
+    selectedExperienceIds: [],
     lockedComponentIds: [],
     rejectedOptionIds: [],
     hotels: [],
     transport: [],
     activities: [],
     food: [],
+    experiences: [],
     permits: [],
     itinerary: [],
     costs: [],
@@ -108,6 +110,7 @@ interface TripStore {
   refineInvestigation: (text: string) => Promise<void>;
   liveMode: boolean | null; // null = unknown, true = live pipeline, false = fallback
   toggleSelectPlace: (placeId: string) => void;
+  toggleExperience: (expId: string) => void;
   setDuration: (days: number) => void;
   setTravelers: (n: number) => void;
   setOrigin: (city: string) => void;
@@ -247,6 +250,19 @@ export const useTrip = create<TripStore>((set, get) => ({
       ? blob.selectedPlaceIds.filter((id) => id !== placeId)
       : [...blob.selectedPlaceIds, placeId];
     set({ blob: { ...blob, selectedPlaceIds, updatedAt: now() } });
+  },
+
+  toggleExperience: (expId) => {
+    const { blob, dataset } = get();
+    const has = blob.selectedExperienceIds.includes(expId);
+    const selectedExperienceIds = has
+      ? blob.selectedExperienceIds.filter((id) => id !== expId)
+      : [...blob.selectedExperienceIds, expId];
+    // keep the chosen Experience[] in sync so cost updates live
+    const experiences = (dataset?.experiences ?? []).filter((e) => selectedExperienceIds.includes(e.id));
+    let next = { ...blob, selectedExperienceIds, experiences, updatedAt: now() };
+    if (blob.hotels.length) next.costs = computeCosts(next);
+    set({ blob: next });
   },
 
   setDuration: (days) => {
@@ -455,6 +471,8 @@ export const useTrip = create<TripStore>((set, get) => ({
         whyRecommended: p.blurb,
       }));
 
+    const experiences = (dataset.experiences ?? []).filter((e) => blob.selectedExperienceIds.includes(e.id));
+
     let next: TripBlob = {
       ...blob,
       flight: flight ?? undefined,
@@ -463,6 +481,7 @@ export const useTrip = create<TripStore>((set, get) => ({
       transport,
       permits,
       food,
+      experiences,
       activities,
       updatedAt: now(),
     };

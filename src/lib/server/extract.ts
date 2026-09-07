@@ -268,6 +268,60 @@ ${corpus}`,
   return res.food;
 }
 
+// ---------- Experiences (bookable things to do, with prices) ----------
+const ExperienceSchema = z.object({
+  experiences: z
+    .array(
+      z.object({
+        name: z.string(),
+        category: z
+          .enum(["theme_park", "water", "adventure", "wildlife", "tour", "cultural", "wellness", "food_exp", "nightlife"])
+          .optional()
+          .default("tour"),
+        blurb: z.string().max(180).optional().default(""),
+        price: z.coerce.number().min(0).max(500000).optional(),
+        priceNote: z.string().max(60).optional(),
+        perPerson: z.boolean().optional().default(true),
+        durationHours: z.coerce.number().min(0.25).max(48).optional(),
+        difficulty: z.enum(["easy", "moderate", "hard"]).optional(),
+        familyFriendly: z.boolean().optional(),
+        minAge: z.coerce.number().min(0).max(21).optional(),
+        location: z.string().max(80).optional(),
+        whyRecommended: z.string().max(160).optional(),
+      })
+    )
+    .max(10),
+});
+export type ExtractedExperience = z.infer<typeof ExperienceSchema>["experiences"][number];
+
+export async function extractExperiences(
+  destination: string,
+  pages: CrawledPage[],
+  signal?: AbortSignal
+): Promise<ExtractedExperience[]> {
+  const corpus = pageCorpus(pages, 8);
+  if (!corpus) return [];
+  const res = await chatJSON(
+    [
+      { role: "system", content: SYS },
+      {
+        role: "user",
+        content: `DESTINATION: ${destination}
+Extract BOOKABLE things to do / paid experiences in ${destination} (e.g. theme parks, water sports, paragliding, snorkeling/scuba, safaris, guided tours, film-city tickets, adventure activities). Aim for 4-8.
+For each, capture the TICKET/ACTIVITY PRICE in INR if the text states one (numbers only), whether it's per person, duration, difficulty, whether it's family-friendly, and any minimum age.
+Return JSON: { "experiences": [ {name, category, blurb, price, priceNote, perPerson, durationHours, difficulty, familyFriendly, minAge, location, whyRecommended} ] }
+Only include real, named experiences supported by the text. Omit price if not stated (do NOT invent it).
+
+PAGES:
+${corpus}`,
+      },
+    ],
+    ExperienceSchema,
+    { signal, reasoning: "low", maxTokens: 3500 }
+  );
+  return res.experiences;
+}
+
 // ---------- Conflict detection ----------
 const ConflictSchema = z.object({
   conflicts: z

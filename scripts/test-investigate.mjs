@@ -46,6 +46,8 @@ for (const p of dataset.places.slice(0, 3)) {
 console.log("Hotels:", dataset.hotels.length, "→", dataset.hotels.map(h => `${h.name} (clean ${h.cleanliness}, bath ${h.bathroomScore}, ₹${h.pricePerNight})`).join(" | "));
 console.log("Permits:", dataset.permits.map(p => p.name).join(", ") || "none");
 console.log("Food:", dataset.food.map(f => f.name).join(", ") || "none");
+console.log("Experiences:", dataset.experiences.length);
+for (const e of dataset.experiences.slice(0, 6)) console.log(`  - ${e.name} [${e.category}] ${e.price>0?('₹'+e.price+(e.perPerson?'/pp':'')):'free'}${e.estimated?' (est)':''} · ${e.difficulty||'-'} · fam=${e.familyFriendly}`);
 console.log("Conflicts:", dataset.conflicts.length);
 const f = dataset.flights[0];
 if (f) console.log(`Flight sample: ${f.airline} ${f.depart}→${f.arrive} ${f.duration||''} stops=${f.stops} fare ${f.fareLow}-${f.fareHigh} est=${f.estimated}`);

@@ -7,12 +7,17 @@ import { chatJSON } from "./groq";
 // priorities/constraints that steer the whole investigation.
 // ============================================================================
 
+// Lenient number: tolerates 0 / out-of-range / strings by mapping to undefined
+// rather than throwing (the model sometimes returns 0 for "unspecified").
+const optDays = z.coerce.number().optional().transform((n) => (n && n >= 1 && n <= 60 ? n : undefined));
+const optTravelers = z.coerce.number().optional().transform((n) => (n && n >= 1 && n <= 20 ? n : undefined));
+
 const IntentSchema = z.object({
   destination: z.string(),
   region: z.string().optional(),
   originCity: z.string().optional(),
-  durationDays: z.number().min(1).max(60).optional(),
-  travelers: z.number().min(1).max(20).optional(),
+  durationDays: optDays,
+  travelers: optTravelers,
   budgetTier: z.enum(["economical", "balanced", "premium"]).optional(),
   pace: z.enum(["comfortable", "balanced", "fast"]).optional(),
   priorities: z.array(z.string()).max(8).default([]),

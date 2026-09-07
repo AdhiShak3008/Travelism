@@ -7,6 +7,7 @@ import type {
   TransportOption,
   Permit,
   FoodPick,
+  Experience,
   Source,
   EvidencePacket,
   Conflict,
@@ -22,6 +23,7 @@ import {
   TAWANG_TRANSPORT,
   TAWANG_PERMITS,
   TAWANG_FOOD,
+  TAWANG_EXPERIENCES,
 } from "./tawang";
 import { GENERIC_DESTINATIONS, buildGenericDataset } from "./generic";
 
@@ -46,6 +48,7 @@ export interface DestinationDataset {
   transport: TransportOption[];
   permits: Permit[];
   food: FoodPick[];
+  experiences: Experience[];
   evidence: EvidencePacket[];
   conflicts: Conflict[];
   /** Live datasets carry their own dynamically-discovered sources. */
@@ -154,6 +157,7 @@ class MockResearchProvider implements ResearchProvider {
         transport: TAWANG_TRANSPORT,
         permits: TAWANG_PERMITS,
         food: TAWANG_FOOD,
+        experiences: TAWANG_EXPERIENCES,
         evidence,
         conflicts,
       };

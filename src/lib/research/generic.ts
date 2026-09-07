@@ -265,6 +265,7 @@ export function buildGenericDataset(id: string, name: string): DestinationDatase
     transport,
     permits,
     food,
+    experiences: [],
     evidence: [],
     conflicts: [],
   };

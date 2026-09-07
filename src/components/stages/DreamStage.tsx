@@ -8,7 +8,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 
 const SUGGESTIONS = [
   "Tawang for a week — clean stays, big mountain scenery",
-  "A slow trip to Ladakh with my parents",
+  "A slow trip to Ladakh",
   "Meghalaya waterfalls and living root bridges",
   "Coorg coffee country, quiet and easy",
 ];

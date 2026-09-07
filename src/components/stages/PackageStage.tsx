@@ -7,13 +7,14 @@ import { inr } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 import { HotelCard } from "@/components/ui/HotelCard";
 import { FlightCard, TransportCard, PermitCard, FoodCard, ConflictBanner } from "@/components/ui/ComponentCards";
+import { ExperienceCard } from "@/components/ui/ExperienceCard";
 import { CostPanel } from "@/components/ui/CostPanel";
 import { JourneyRibbon } from "@/components/ui/JourneyRibbon";
 import { ItineraryView } from "@/components/ui/ItineraryView";
 import { ModifyChat } from "@/components/ui/ModifyChat";
 import { SectionTitle } from "@/components/ui/Primitives";
 
-type Tab = "overview" | "flights" | "stays" | "transport" | "itinerary" | "food" | "permits";
+type Tab = "overview" | "flights" | "stays" | "transport" | "itinerary" | "todo" | "food" | "permits";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "At a glance" },
@@ -21,6 +22,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "stays", label: "Stays" },
   { id: "flights", label: "Flights" },
   { id: "transport", label: "Getting around" },
+  { id: "todo", label: "Things to do" },
   { id: "food", label: "Food" },
   { id: "permits", label: "Paperwork" },
 ];
@@ -137,6 +139,21 @@ export function PackageStage() {
               {blob.transport.map((t) => (
                 <TransportCard key={t.id} t={t} />
               ))}
+            </div>
+          )}
+
+          {tab === "todo" && (
+            <div>
+              <SectionTitle eyebrow="Things to do" title="Experiences" hint="Browse and add — each adds its own cost to your trip." />
+              {dataset.experiences.length === 0 ? (
+                <p className="text-sm text-ink-soft">No bookable experiences found for this destination.</p>
+              ) : (
+                <div className="grid gap-5 sm:grid-cols-2">
+                  {dataset.experiences.map((e) => (
+                    <ExperienceCard key={e.id} exp={e} />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
