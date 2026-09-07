@@ -12,6 +12,7 @@ import { SourceChips } from "./Provenance";
 import { ReviewIntelCard } from "./ReviewIntelCard";
 import { VideoRow } from "./VideoRow";
 import { SteeringBox } from "./SteeringBox";
+import { useLightbox } from "./Lightbox";
 
 export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: boolean }) {
   const dataset = useTrip((s) => s.dataset);
@@ -21,6 +22,7 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
   const [expanded, setExpanded] = useState(selected);
   const [showAlts, setShowAlts] = useState(false);
 
+  const lightbox = useLightbox();
   const intel = dataset?.reviews[hotel.reviewIntelId];
   const videos = dataset?.videos.filter((v) => hotel.videoIds.includes(v.id)) ?? [];
   const alts = dataset?.hotels.filter((h) => h.id !== hotel.id) ?? [];
@@ -29,14 +31,24 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
   return (
     <motion.div layout className={cx("overflow-hidden rounded-2xl border bg-card", selected ? "border-brand shadow-lift ring-1 ring-brand/30" : "border-line shadow-card")}>
       <div className="grid gap-0 md:grid-cols-[280px_1fr]">
-        <div className="relative aspect-[4/3] bg-paper-2 md:aspect-auto">
+        <button
+          className="relative aspect-[4/3] bg-paper-2 md:aspect-auto"
+          onClick={() => hotel.images[0]?.url && lightbox.open(hotel.images, 0, hotel.name)}
+        >
           {hotel.images[0]?.url ? (
-            <Image src={hotel.images[0].url} alt={hotel.name} fill sizes="280px" className="object-cover" unoptimized />
+            <>
+              <Image src={hotel.images[0].url} alt={hotel.name} fill sizes="280px" className="object-cover" unoptimized />
+              {hotel.images.length > 1 && (
+                <span className="absolute bottom-3 right-3 rounded-full bg-black/60 px-2 py-0.5 text-[11px] text-white">
+                  📷 {hotel.images.length}
+                </span>
+              )}
+            </>
           ) : (
             <div className="grid h-full place-items-center text-3xl">🏨</div>
           )}
           {locked && <span className="stamp absolute left-3 top-3 !border-terra/60 !text-terra !bg-white/85 backdrop-blur">Kept</span>}
-        </div>
+        </button>
 
         <div className="p-5">
           <div className="flex items-start justify-between gap-3">
@@ -95,10 +107,14 @@ export function HotelCard({ hotel, selected }: { hotel: HotelOption; selected: b
               <div>
                 <div className="mb-2 label-eyebrow">Photos {bathroomImg ? "(incl. bathroom)" : ""}</div>
                 <div className="no-scrollbar flex gap-2 overflow-x-auto">
-                  {hotel.images.map((im) => (
-                    <div key={im.id} className="relative h-28 w-40 shrink-0 overflow-hidden rounded-lg border border-line">
+                  {hotel.images.map((im, idx) => (
+                    <button
+                      key={im.id}
+                      onClick={() => lightbox.open(hotel.images, idx, hotel.name)}
+                      className="relative h-28 w-40 shrink-0 overflow-hidden rounded-lg border border-line transition hover:opacity-90"
+                    >
                       <Image src={im.url} alt={im.category} fill sizes="160px" className="object-cover" unoptimized />
-                    </div>
+                    </button>
                   ))}
                 </div>
                 {!bathroomImg && <p className="mt-2 text-xs text-warn">No reliable recent bathroom photos found.</p>}

@@ -10,52 +10,92 @@ import { SourceChips } from "./Provenance";
 import { resolveSource } from "@/lib/research/sourceRegistry";
 import { StarRating } from "./Primitives";
 
+function FlightRoute({ flight }: { flight: FlightOption }) {
+  return (
+    <div className="mt-3 flex items-center gap-3">
+      <div className="text-center">
+        <div className="display text-xl font-semibold text-ink">{flight.depart}</div>
+        <div className="text-[11px] text-ink-faint">{flight.from}</div>
+      </div>
+      <div className="flex-1">
+        <div className="mb-1 text-center text-[11px] text-ink-faint">{flight.duration ?? ""}</div>
+        <div className="relative h-px bg-line-strong">
+          <span className="absolute -top-[3px] left-0 h-1.5 w-1.5 rounded-full bg-brand" />
+          {flight.stops && flight.stops > 0 && (
+            <span className="absolute -top-[3px] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-warn" />
+          )}
+          <span className="absolute -top-[3px] right-0 h-1.5 w-1.5 rounded-full bg-brand" />
+          <span className="absolute -top-2 right-0 text-xs text-ink-faint">✈</span>
+        </div>
+        <div className="mt-1 text-center text-[11px] text-ink-faint">
+          {flight.stops === 0 ? "Nonstop" : flight.stopDetail ?? flight.layover ?? `${flight.stops} stop`}
+        </div>
+      </div>
+      <div className="text-center">
+        <div className="display text-xl font-semibold text-ink">{flight.arrive}</div>
+        <div className="text-[11px] text-ink-faint">{flight.to}</div>
+      </div>
+    </div>
+  );
+}
+
 export function FlightCard({ flight, kind }: { flight: FlightOption; kind: "out" | "return" }) {
   const dataset = useTrip((s) => s.dataset);
   const chooseFlight = useTrip((s) => s.chooseFlight);
   const toggleLock = useTrip((s) => s.toggleLock);
   const locked = useTrip((s) => s.blob.lockedComponentIds.includes(flight.id));
   const [alts, setAlts] = useState(false);
-  const options = dataset?.flights.filter((f) => f.from === flight.from && f.id !== flight.id) ?? [];
+  // options going the same direction
+  const gw = dataset?.meta.gateway.split(/[(,]/)[0].trim().toLowerCase() ?? "";
+  const sameDir = (f: FlightOption) => (kind === "out" ? f.to.toLowerCase().includes(gw) || f.id.includes("out") : !(f.to.toLowerCase().includes(gw) || f.id.includes("out")));
+  const options = dataset?.flights.filter((f) => f.id !== flight.id && sameDir(f)) ?? [];
+
+  const fareBand = flight.fareLow && flight.fareHigh ? `${inr(flight.fareLow)}–${inr(flight.fareHigh)}` : inr(flight.fare);
 
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-lg">✈️</span>
             <span className="font-semibold text-ink">{flight.airline}</span>
-            <span className="text-xs text-ink-faint">{flight.flightNo}</span>
-            {flight.earlyMorning && <span className="stamp !border-warn/60 !text-warn">early</span>}
+            <span className="chip !text-[10px] !py-0.5">{kind === "out" ? "Outbound" : "Return"}</span>
+            {flight.cabin && <span className="text-xs text-ink-faint">{flight.cabin}</span>}
+            {flight.estimated && <span className="stamp">Estimated</span>}
+            {flight.earlyMorning && <span className="stamp !border-warn/60 !text-warn">Early start</span>}
           </div>
-          <div className="mt-2 flex items-center gap-3 text-sm">
-            <div className="text-center">
-              <div className="display text-lg font-semibold text-ink">{flight.depart}</div>
-              <div className="text-xs text-ink-faint">{flight.from}</div>
-            </div>
-            <div className="flex-1 text-center text-xs text-ink-faint">─── {flight.layover} ───</div>
-            <div className="text-center">
-              <div className="display text-lg font-semibold text-ink">{flight.arrive}</div>
-              <div className="text-xs text-ink-faint">{flight.to}</div>
-            </div>
+
+          <FlightRoute flight={flight} />
+
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint">
+            <span>🧳 {flight.baggage}</span>
+            {typeof flight.onTime === "number" && <span>⏱ {flight.onTime}% on-time</span>}
+            <span>{flight.refundable ? "↩ Refundable" : "Non-refundable"}</span>
           </div>
-          <div className="mt-2 text-xs text-ink-faint">🧳 {flight.baggage}</div>
         </div>
-        <div className="text-right">
-          <div className="display text-xl font-semibold text-ink">{inr(flight.fare)}</div>
-          <div className="text-xs text-ink-faint">per person</div>
+        <div className="shrink-0 text-right">
+          <div className="display text-lg font-semibold text-ink">{fareBand}</div>
+          <div className="text-[11px] text-ink-faint">est. per person</div>
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between">
+      {flight.estimated && (
+        <div className="mt-3 rounded-lg border border-terra/25 bg-terra/[0.06] px-3 py-1.5 text-[11px] text-terra">
+          Fare band estimated for this sector. Connect a live flights source for exact schedules and prices.
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center justify-between">
         <SourceChips sourceIds={[flight.sourceId]} />
         <div className="flex items-center gap-2">
           <button onClick={() => toggleLock(flight.id)} className={cx("btn-ghost !py-1.5 !text-xs", locked && "!border-terra/50 !text-terra")}>
             {locked ? "🔒 Kept" : "Keep"}
           </button>
-          <button onClick={() => setAlts((a) => !a)} className="btn-ghost !py-1.5 !text-xs">
-            {alts ? "Hide" : `${options.length} others`}
-          </button>
+          {options.length > 0 && (
+            <button onClick={() => setAlts((a) => !a)} className="btn-ghost !py-1.5 !text-xs">
+              {alts ? "Hide" : `${options.length} other times`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -65,8 +105,8 @@ export function FlightCard({ flight, kind }: { flight: FlightOption; kind: "out"
             {options.map((f) => (
               <div key={f.id} className="flex items-center justify-between rounded-xl border border-line bg-paper-2 p-3 text-sm">
                 <div>
-                  <span className="font-medium text-ink">{f.airline} {f.flightNo}</span>
-                  <span className="ml-2 text-xs text-ink-faint">{f.depart}→{f.arrive} · {inr(f.fare)}</span>
+                  <span className="font-medium text-ink">{f.airline}</span>
+                  <span className="ml-2 text-xs text-ink-faint">{f.depart}→{f.arrive} · {f.duration} · {inr(f.fare)}</span>
                 </div>
                 <button onClick={() => chooseFlight(f, kind)} className="btn-ghost !py-1 !text-xs">Pick</button>
               </div>

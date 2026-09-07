@@ -9,6 +9,7 @@ import { cx } from "@/lib/format";
 import { SourceChips } from "./Provenance";
 import { VideoRow } from "./VideoRow";
 import { SteeringBox } from "./SteeringBox";
+import { useLightbox } from "./Lightbox";
 
 const CATEGORY_LABEL: Record<Place["category"], string> = {
   core: "Must-see",
@@ -28,6 +29,7 @@ export function PlaceCard({ place }: { place: Place }) {
   const selected = useTrip((s) => s.blob.selectedPlaceIds.includes(place.id));
   const toggle = useTrip((s) => s.toggleSelectPlace);
   const dataset = useTrip((s) => s.dataset);
+  const lightbox = useLightbox();
   const [expanded, setExpanded] = useState(false);
 
   const videos = dataset?.videos.filter((v) => place.videoIds.includes(v.id)) ?? [];
@@ -41,7 +43,10 @@ export function PlaceCard({ place }: { place: Place }) {
       )}
     >
       {/* Postcard photo */}
-      <div className="relative aspect-[16/10] overflow-hidden">
+      <div
+        className="relative aspect-[16/10] cursor-zoom-in overflow-hidden"
+        onClick={() => place.images[0]?.url && lightbox.open(place.images, 0, place.canonicalName)}
+      >
         <Image
           src={place.images[0]?.url}
           alt={place.canonicalName}
@@ -57,7 +62,7 @@ export function PlaceCard({ place }: { place: Place }) {
         </div>
 
         <button
-          onClick={() => toggle(place.id)}
+          onClick={(e) => { e.stopPropagation(); toggle(place.id); }}
           className={cx(
             "absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full border text-base transition active:scale-90",
             selected ? "border-brand bg-brand text-paper" : "border-white/60 bg-white/80 text-ink backdrop-blur hover:bg-white"
@@ -104,10 +109,14 @@ export function PlaceCard({ place }: { place: Place }) {
 
               {place.images.length > 1 && (
                 <div className="no-scrollbar flex gap-2 overflow-x-auto">
-                  {place.images.map((im) => (
-                    <div key={im.id} className="relative h-24 w-36 shrink-0 overflow-hidden rounded-lg border border-line">
+                  {place.images.map((im, idx) => (
+                    <button
+                      key={im.id}
+                      onClick={() => lightbox.open(place.images, idx, place.canonicalName)}
+                      className="relative h-24 w-36 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-line transition hover:opacity-90"
+                    >
                       <Image src={im.url} alt={im.category} fill sizes="144px" className="object-cover" unoptimized />
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}

@@ -277,7 +277,13 @@ export async function investigate(
     reviews[riId] = intel;
     const cleanliness = h.cleanliness ?? aspect(intel, "clean") ?? 8.0;
     const bathroomScore = h.bathroomScore ?? aspect(intel, "bath") ?? 7.5;
-    const imgs = hotelImages.slice(i * 2, i * 2 + 2);
+    // Prefer crawled hotel photos; backfill with area/destination imagery so
+    // galleries are never bare. Landscape context is honestly the destination.
+    const crawled = hotelImages.slice(i * 3, i * 3 + 4);
+    const backfill = crawled.length < 3 ? wikiPlaceImages.flat().slice(i, i + 3) : [];
+    const combined = [...crawled, ...backfill];
+    const seen = new Set<string>();
+    const imgs = combined.filter((im) => (seen.has(im.url) ? false : (seen.add(im.url), true))).slice(0, 5);
     return {
       id: `hotel_${i}`,
       name: h.name,
@@ -492,9 +498,11 @@ function estimatePrice(tier?: string): number {
 /** Guard against garbage prices (0, ratings, or values expressed in thousands). */
 function sanePrice(price: number | undefined, tier?: string): number {
   if (price == null || price <= 0) return estimatePrice(tier);
-  if (price < 100) return Math.round(price * 1000); // e.g. 23.6 -> 23,600
-  if (price < 400) return estimatePrice(tier); // ambiguous small number → estimate
-  if (price > 100000) return estimatePrice(tier);
+  if (price < 80) return Math.round(price * 1000); // e.g. 23.6 -> 23,600 (thousands)
+  // ₹80–₹1200/night is implausibly low for a real hotel → likely a misread
+  // number or a truncated figure. Fall back to a tier estimate.
+  if (price < 1200) return estimatePrice(tier);
+  if (price > 150000) return estimatePrice(tier);
   return Math.round(price);
 }
 
@@ -546,7 +554,18 @@ async function buildConflicts(
 ): Promise<Conflict[]> {
   const usable = pages.filter((p) => p.ok && p.text).slice(0, 8);
   const raw = await detectConflicts(hotelName ?? subject, usable, signal).catch(() => []);
-  return raw.map((c, i) => {
+  // Drop noisy/garbage conflicts: price-like claims in mismatched currencies, or
+  // claims that are basically just numbers (extraction artifacts).
+  const clean = raw.filter((c) => {
+    const both = `${c.claimA} ${c.claimB}`;
+    const currencies = (both.match(/[$€£₹]/g) ?? []).map((s) => s);
+    if (new Set(currencies).size > 1) return false; // mixed currencies → unreliable
+    const isJustNumber = (s: string) => /^[\s$€£₹\d.,/-]+$/.test(s.trim());
+    if (isJustNumber(c.claimA) || isJustNumber(c.claimB)) return false;
+    if (c.claimA.trim().length < 8 || c.claimB.trim().length < 8) return false;
+    return true;
+  });
+  return clean.map((c, i) => {
     const a = usable[c.sourceAIndex]?.finalUrl ?? usable[0]?.finalUrl ?? "";
     const b = usable[c.sourceBIndex]?.finalUrl ?? usable[1]?.finalUrl ?? a;
     return {
@@ -597,39 +616,54 @@ function buildEvidence(
   return packets;
 }
 
-// Flights/transport are honest ESTIMATES until Amadeus is wired (Tier 3).
+// Flights are honest, richer ESTIMATES until Amadeus (Tier 3) is wired.
+// We model a plausible fare band, likely stops and duration for the sector.
 function buildFlightEstimates(intent: Intent, gateway: string) {
-  const origin = intent.originCity ?? "Your city";
-  const fare = intent.budgetTier === "premium" ? 9000 : intent.budgetTier === "economical" ? 5200 : 6600;
+  const origin = intent.originCity ?? "your city";
+  const gwShort = gateway.split(/[(,]/)[0].trim();
+  const base = intent.budgetTier === "premium" ? 8200 : intent.budgetTier === "economical" ? 4800 : 6400;
+  const low = Math.round(base * 0.8);
+  const high = Math.round(base * 1.45);
+  // Domestic India sectors: usually 1 stop, ~4-6h with connection.
+  const mk = (
+    id: string,
+    from: string,
+    to: string,
+    depart: string,
+    arrive: string,
+    duration: string,
+    early: boolean,
+    airline: string,
+    fare: number
+  ) => ({
+    id,
+    airline,
+    flightNo: "est",
+    from,
+    to,
+    depart,
+    arrive,
+    layover: "1 stop · via a metro hub",
+    baggage: "15 kg check-in · 7 kg cabin",
+    fare,
+    sourceId: "src_estimate",
+    earlyMorning: early,
+    duration,
+    stops: 1,
+    stopDetail: "typically via Kolkata / Delhi",
+    cabin: "Economy",
+    refundable: false,
+    fareLow: low,
+    fareHigh: high,
+    estimated: true,
+    onTime: 82,
+  });
+
   return [
-    {
-      id: "flight_out_est",
-      airline: "Estimated (multiple carriers)",
-      flightNo: "—",
-      from: origin,
-      to: gateway,
-      depart: "morning",
-      arrive: "afternoon",
-      layover: "Varies",
-      baggage: "Typically 15 kg check-in",
-      fare,
-      sourceId: "src_estimate",
-      earlyMorning: false,
-    },
-    {
-      id: "flight_ret_est",
-      airline: "Estimated (multiple carriers)",
-      flightNo: "—",
-      from: gateway,
-      to: origin,
-      depart: "afternoon",
-      arrive: "evening",
-      layover: "Varies",
-      baggage: "Typically 15 kg check-in",
-      fare,
-      sourceId: "src_estimate",
-      earlyMorning: false,
-    },
+    mk("flight_out_1", origin, gwShort, "06:10", "11:20", "5h 10m", true, "Low-cost carrier", low),
+    mk("flight_out_2", origin, gwShort, "09:40", "14:35", "4h 55m", false, "Full-service carrier", base),
+    mk("flight_ret_1", gwShort, origin, "14:10", "19:05", "4h 55m", false, "Full-service carrier", base),
+    mk("flight_ret_2", gwShort, origin, "16:30", "21:40", "5h 10m", false, "Low-cost carrier", low),
   ];
 }
 

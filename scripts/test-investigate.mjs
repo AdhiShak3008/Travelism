@@ -47,4 +47,6 @@ console.log("Hotels:", dataset.hotels.length, "→", dataset.hotels.map(h => `${
 console.log("Permits:", dataset.permits.map(p => p.name).join(", ") || "none");
 console.log("Food:", dataset.food.map(f => f.name).join(", ") || "none");
 console.log("Conflicts:", dataset.conflicts.length);
+const f = dataset.flights[0];
+if (f) console.log(`Flight sample: ${f.airline} ${f.depart}→${f.arrive} ${f.duration||''} stops=${f.stops} fare ${f.fareLow}-${f.fareHigh} est=${f.estimated}`);
 console.log("Facts:", (dataset.meta.facts||[]).join(" · "));

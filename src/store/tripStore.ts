@@ -33,6 +33,7 @@ import {
 import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
 import { runLiveInvestigation, runRefine, fetchCapabilities, type LiveProgress } from "@/lib/liveClient";
 import { registerSources } from "@/lib/research/sourceRegistry";
+import { routeInstruction } from "@/lib/concierge";
 
 const now = () => new Date().toISOString();
 
@@ -379,16 +380,18 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob, dataset } = get();
     if (!dataset) return;
 
-    // Choose flight per tier + early-flight constraint
+    // Choose flights per tier + early-flight constraint.
+    // Outbound = heading toward the gateway; return = heading back to origin.
     const wantCheap = blob.preferences.budgetTier === "economical";
-    const outbound = dataset.flights
-      .filter((f) => f.from.includes("HYD") || f.from.includes("("))
-      .filter((f) => f.to !== "Hyderabad (HYD)")
-      .filter((f) => !blob.preferences.avoidEarlyFlights || !f.earlyMorning);
-    const flight =
-      outbound.sort((a, b) => (wantCheap ? a.fare - b.fare : b.fare - a.fare))[0] ??
-      dataset.flights.find((f) => !f.to.includes("HYD"));
-    const returnFlight = dataset.flights.find((f) => f.to.includes("Hyderabad") || f.to.includes("HYD"));
+    const gwShort = dataset.meta.gateway.split(/[(,]/)[0].trim().toLowerCase();
+    const isOutbound = (f: (typeof dataset.flights)[number]) => f.to.toLowerCase().includes(gwShort) || f.id.includes("out");
+    const notEarly = (f: (typeof dataset.flights)[number]) => !blob.preferences.avoidEarlyFlights || !f.earlyMorning;
+
+    const outbound = dataset.flights.filter(isOutbound).filter(notEarly);
+    const returns = dataset.flights.filter((f) => !isOutbound(f));
+    const pick = (arr: typeof dataset.flights) => arr.sort((a, b) => (wantCheap ? a.fare - b.fare : b.fare - a.fare))[0];
+    const flight = pick(outbound) ?? pick(dataset.flights.filter(isOutbound)) ?? dataset.flights[0];
+    const returnFlight = pick(returns.filter(notEarly)) ?? pick(returns) ?? dataset.flights[1];
 
     // Choose hotel: rank by priorities
     const hotel = rankHotels(blob, dataset)[0];
@@ -492,78 +495,180 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob, dataset } = get();
     if (!dataset) return;
 
-    // 1) parse → signals, mood, prefs
-    const signals = parseComment(text, "trip");
-    const md = moodDeltaFromComment(text);
-    const mood = applyMoodDelta(blob.mood, md);
-    const allSignals = [...blob.signals, ...signals];
-    const prefs = derivePreferences(allSignals, blob.preferences);
+    const action = routeInstruction(text, blob, dataset);
+    const before = costTotals(blob.costs).total;
+    const money = (n: number) => `₹${Math.round(Math.abs(n)).toLocaleString("en-IN")}`;
 
-    let working: TripBlob = { ...blob, signals: allSignals, mood, preferences: prefs, updatedAt: now() };
+    // A pure question — answer, change nothing.
+    if (action.kind === "answer") {
+      set({ lastMessage: action.text });
+      return;
+    }
 
-    // 2) act on structured effects — targeted, not full regen
-    const effects = signals.reduce<Record<string, string | number | boolean>>((acc, s) => ({ ...acc, ...s.effects }), {});
+    // Budget optimizations delegate to the deterministic optimizer.
+    if (action.kind === "budget_target") {
+      const res = optimizeToBudget(blob, dataset, action.amount);
+      set({ blob: res.blob, lastMessage: res.message });
+      get().pushMutation(res.mutation);
+      return;
+    }
+    if (action.kind === "reduce_cost") {
+      const res = optimizeToBudget(blob, dataset, Math.round(before * action.pct));
+      set({ blob: res.blob, lastMessage: res.message });
+      get().pushMutation(res.mutation);
+      return;
+    }
+
+    let working: TripBlob = { ...blob, updatedAt: now() };
     const deltas: string[] = [];
-    const before = costTotals(working.costs).total;
+    let reply = "";
 
-    // budget target
-    if (typeof effects.target_budget === "number") {
-      const res = optimizeToBudget(working, dataset, effects.target_budget);
-      set({ blob: res.blob, lastMessage: res.message });
-      get().pushMutation(res.mutation);
-      return;
-    }
-    if (effects.reduce_cost) {
-      const target = Math.round(before * 0.92);
-      const res = optimizeToBudget(working, dataset, target);
-      set({ blob: res.blob, lastMessage: res.message });
-      get().pushMutation(res.mutation);
-      return;
-    }
-
-    // upgrade hotel
-    if (effects.upgrade_comfort && !working.lockedComponentIds.includes(working.hotels[0]?.id)) {
-      const nicer = [...dataset.hotels].sort((a, b) => b.cleanliness + b.bathroomScore - (a.cleanliness + a.bathroomScore))[0];
-      if (nicer && working.hotels[0]?.id !== nicer.id) {
-        working.hotels = [nicer, ...working.hotels.slice(1)];
-        deltas.push(`Hotel → ${nicer.name}`, "Comfort ↑", "Bathroom ↑");
+    switch (action.kind) {
+      case "upgrade_hotel": {
+        if (working.lockedComponentIds.includes(working.hotels[0]?.id)) {
+          reply = "Your hotel is locked, so I left it as is. Unlock it if you'd like me to upgrade.";
+          break;
+        }
+        const current = working.hotels[0];
+        const nicer = [...dataset.hotels]
+          .filter((h) => h.id !== current?.id)
+          .sort((a, b) => b.cleanliness + b.bathroomScore - (a.cleanliness + a.bathroomScore))[0];
+        if (nicer && (!current || nicer.cleanliness + nicer.bathroomScore > current.cleanliness + current.bathroomScore)) {
+          working.hotels = [nicer, ...working.hotels.slice(1)];
+          deltas.push(`Hotel → ${nicer.name}`, `Cleanliness ${nicer.cleanliness}/10 · Bathroom ${nicer.bathroomScore}/10`);
+          reply = `Switched you to ${nicer.name} — the highest-rated stay we found.`;
+        } else {
+          reply = `${current?.name ?? "Your current stay"} is already the nicest option we found.`;
+        }
+        break;
       }
-    }
-
-    // avoid early flights → reselect
-    if (effects.avoid_early_flights && working.flight?.earlyMorning) {
-      const alt = dataset.flights.find((f) => f.from === working.flight!.from && !f.earlyMorning);
-      if (alt) {
-        working.flight = alt;
-        deltas.push(`Outbound flight → ${alt.airline} ${alt.flightNo} (no early departure)`);
+      case "cheaper_hotel": {
+        if (working.lockedComponentIds.includes(working.hotels[0]?.id)) {
+          reply = "Your hotel is locked. Unlock it and I'll find something cheaper.";
+          break;
+        }
+        const current = working.hotels[0];
+        const cheaper = [...dataset.hotels]
+          .filter((h) => h.id !== current?.id && (!current || h.pricePerNight < current.pricePerNight) && h.cleanliness >= 7)
+          .sort((a, b) => b.cleanliness - a.cleanliness)[0];
+        if (cheaper && current) {
+          working.hotels = [cheaper, ...working.hotels.slice(1)];
+          deltas.push(`Hotel → ${cheaper.name}`, `Saved ${money(current.pricePerNight - cheaper.pricePerNight)}/night`);
+          reply = `Moved you to ${cheaper.name} — cleaner-than-average and easier on the wallet.`;
+        } else {
+          reply = "Your current stay is already among the best-value options.";
+        }
+        break;
       }
-    }
-
-    // pace change → rebuild itinerary
-    if (effects.pace) {
-      deltas.push(`Pace → ${effects.pace}`, "Itinerary efficiency updated");
-    }
-
-    // find alternatives (hotel) — surface message only
-    if (effects.find_alternatives) {
-      set({ lastMessage: "Surfacing alternatives below. Compare and switch if you prefer." });
+      case "swap_hotel_named": {
+        const match = dataset.hotels.find(
+          (h) => h.name.toLowerCase().includes(action.query) || action.query.includes(h.name.toLowerCase().split(" ")[0])
+        );
+        if (match) {
+          working.hotels = [match, ...working.hotels.slice(1)];
+          deltas.push(`Hotel → ${match.name}`, `${match.cleanliness}/10 clean · ${money(match.pricePerNight)}/night`);
+          reply = `Booked you into ${match.name}.`;
+        } else {
+          reply = `I couldn't find a stay matching "${action.query}". Try the Stays tab to compare.`;
+        }
+        break;
+      }
+      case "lock_hotel": {
+        const id = working.hotels[0]?.id;
+        if (id && !working.lockedComponentIds.includes(id)) {
+          working.lockedComponentIds = [...working.lockedComponentIds, id];
+          reply = `Locked ${working.hotels[0].name}. I'll optimize everything else around it.`;
+        } else {
+          reply = "Your hotel is already locked.";
+        }
+        break;
+      }
+      case "set_duration": {
+        const days = Math.max(2, Math.min(21, action.days));
+        working.durationDays = days;
+        deltas.push(`Trip length → ${days} days`, "Hotel nights, transport & itinerary recalculated");
+        reply = `Set your trip to ${days} days.`;
+        break;
+      }
+      case "add_days": {
+        const days = Math.max(2, Math.min(21, working.durationDays + action.delta));
+        working.durationDays = days;
+        deltas.push(`Trip length → ${days} days`);
+        reply = action.delta > 0 ? `Added ${action.delta} day${action.delta > 1 ? "s" : ""} — now ${days} days.` : `Trimmed to ${days} days.`;
+        break;
+      }
+      case "set_travelers": {
+        const n = Math.max(1, Math.min(12, action.n));
+        working.travelers = n;
+        working.preferences = { ...working.preferences, travelers: n };
+        deltas.push(`Travellers → ${n}`, "Per-person costs updated");
+        reply = `Updated to ${n} travellers.`;
+        break;
+      }
+      case "remove_place": {
+        const place = working.selectedPlaceIds
+          .map((id) => dataset.places.find((p) => p.id === id))
+          .find((p) => p && (p.canonicalName.toLowerCase().includes(action.query) || action.query.includes(p.canonicalName.toLowerCase().split(" ")[0])));
+        if (place) {
+          working.selectedPlaceIds = working.selectedPlaceIds.filter((id) => id !== place.id);
+          working.activities = working.activities.filter((a) => a.placeId !== place.id);
+          deltas.push(`Removed ${place.canonicalName}`, "Itinerary re-flowed");
+          reply = `Removed ${place.canonicalName} and re-flowed your days.`;
+        } else {
+          reply = `I couldn't find "${action.query}" in your itinerary.`;
+        }
+        break;
+      }
+      case "avoid_early_flights": {
+        working.preferences = { ...working.preferences, avoidEarlyFlights: true };
+        const alt = dataset.flights.find((f) => f.from === working.flight?.from && !f.earlyMorning);
+        if (working.flight?.earlyMorning && alt) {
+          working.flight = alt;
+          deltas.push(`Outbound → ${alt.airline} (no dawn start)`);
+          reply = "Swapped you off the early departure.";
+        } else {
+          reply = "Noted — I'll keep early departures off the table.";
+        }
+        break;
+      }
+      case "set_pace": {
+        working.preferences = { ...working.preferences, pace: action.pace };
+        deltas.push(`Pace → ${action.pace}`, "Itinerary rebalanced");
+        reply = action.pace === "comfortable" ? "Slowed things down — fewer stops, more breathing room." : "Picked up the pace — I've packed a bit more in.";
+        break;
+      }
+      case "preference":
+      case "unknown":
+      default: {
+        // fold into steering signals so it still influences ranking
+        const signals = parseComment(text, "trip");
+        const mood = applyMoodDelta(working.mood, moodDeltaFromComment(text));
+        const allSignals = [...working.signals, ...signals];
+        working.signals = allSignals;
+        working.mood = mood;
+        working.preferences = derivePreferences(allSignals, working.preferences);
+        reply =
+          action.kind === "unknown"
+            ? "I've noted that. I can change your hotel, budget, days, travellers, pace, remove a place, or answer questions about the trip — just ask."
+            : signals[0]?.interpretation ?? "Noted — I'll keep that in mind.";
+        break;
+      }
     }
 
     working.costs = computeCosts(working);
     working.itinerary = buildItinerary(working, dataset);
     const after = costTotals(working.costs).total;
-
     if (after !== before) {
-      deltas.push(after > before ? `Cost ↑ ₹${(after - before).toLocaleString("en-IN")}` : `Saved ₹${(before - after).toLocaleString("en-IN")}`);
+      deltas.push(after > before ? `Cost ↑ ${money(after - before)}` : `Saved ${money(before - after)}`);
     }
 
-    set({ blob: working, lastMessage: signals[0]?.interpretation ?? get().lastMessage });
+    set({ blob: working, lastMessage: reply });
     get().pushMutation({
       id: `mut_${Date.now()}`,
       at: now(),
-      summary: `Updated because you said: “${text}”`,
+      summary: reply,
       reason: text,
-      deltas: deltas.length ? deltas : [signals[0]?.interpretation ?? "Preference noted"],
+      deltas,
       costBefore: before,
       costAfter: after,
     });

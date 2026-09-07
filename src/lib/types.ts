@@ -226,6 +226,17 @@ export interface FlightOption {
   fare: number;
   sourceId: string;
   earlyMorning: boolean;
+  // richer detail
+  duration?: string; // e.g. "4h 45m"
+  stops?: number; // 0 = nonstop
+  stopDetail?: string; // e.g. "via Kolkata (55m)"
+  cabin?: string; // Economy / Premium Economy
+  aircraft?: string;
+  refundable?: boolean;
+  fareLow?: number; // estimated fare band
+  fareHigh?: number;
+  estimated?: boolean; // true until a live flight API (Amadeus) is wired
+  onTime?: number; // 0-100 on-time %
 }
 
 export interface HotelOption {

@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { StageProgress } from "@/components/ui/StageProgress";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LightboxProvider } from "@/components/ui/Lightbox";
 import { DreamStage } from "@/components/stages/DreamStage";
 import { RevealStage } from "@/components/stages/RevealStage";
 import { ShapeStage } from "@/components/stages/ShapeStage";
@@ -21,6 +22,7 @@ export function Flow() {
   const showHeader = stage !== "dream" && stage !== "investigate";
 
   return (
+    <LightboxProvider>
     <div className="min-h-screen">
       {showHeader && (
         <header className="sticky top-0 z-30 border-b border-line bg-paper/85 backdrop-blur-xl">
@@ -57,5 +59,6 @@ export function Flow() {
         {stage === "trip" && <TripModeStage />}
       </motion.main>
     </div>
+    </LightboxProvider>
   );
 }

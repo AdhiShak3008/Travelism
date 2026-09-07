@@ -428,6 +428,12 @@ export const TAWANG_FLIGHTS: FlightOption[] = [
     fare: 6600,
     sourceId: "indigo",
     earlyMorning: false,
+    duration: "4h 45m",
+    stops: 1,
+    stopDetail: "via Kolkata (55m)",
+    cabin: "Economy",
+    refundable: false,
+    onTime: 84,
   },
   {
     id: "flight_out_cheap",
