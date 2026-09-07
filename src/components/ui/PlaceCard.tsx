@@ -68,8 +68,10 @@ export function PlaceCard({ place }: { place: Place }) {
         <button
           onClick={(e) => { e.stopPropagation(); toggle(place.id); }}
           className={cx(
-            "absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full border text-base transition active:scale-90",
-            selected ? "border-brand bg-brand text-paper" : "border-white/60 bg-white/80 text-ink backdrop-blur hover:bg-white"
+            "absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full border text-base font-semibold shadow-card backdrop-blur transition active:scale-90",
+            selected
+              ? "border-brand bg-brand text-paper"
+              : "border-line bg-card text-ink hover:bg-paper-2"
           )}
           aria-label={selected ? "Remove from trip" : "Add to trip"}
         >
