@@ -93,7 +93,7 @@ export async function investigate(
     const results = await tavilySearch(query, { maxResults: n, depth: "advanced", signal });
     const urls = results.map((r) => r.url);
     const fresh = urls.filter((u) => !crawlCache.has(u));
-    const pages = await crawlMany(fresh, 4, signal);
+    const pages = await crawlMany(fresh, 6, signal);
     pages.forEach((p) => crawlCache.set(p.url, p));
     // seed source registry, and backfill text from Tavily when a crawl was blocked
     const all = urls.map((u) => crawlCache.get(u)).filter(Boolean) as CrawledPage[];
@@ -111,25 +111,53 @@ export async function investigate(
     return all;
   }
 
-  // ---- SCOUT: overview + places ----
-  emit({ agent: "scout", phase: "working", status: `Mapping ${dest}` });
-  const overviewPages = await discoverAndCrawl(`${dest} travel guide things to do overview best time`, 6);
-  const overview = await extractOverview(dest, overviewPages, signal).catch(() => ({} as Awaited<ReturnType<typeof extractOverview>>));
+  const bathFocus = intent.priorities.some((p) => /bath|toilet|hygien|clean/i.test(p));
+  const hotelQuery = bathFocus
+    ? `best clean hotels in ${dest} with good bathrooms reviews cleanliness`
+    : `best hotels to stay in ${dest} reviews price`;
 
-  const placePages = await discoverAndCrawl(`top attractions and places to visit in ${dest} itinerary`, 8);
-  let extractedPlaces = await extractPlaces(dest, [...overviewPages, ...placePages], signal).catch((e) => {
-    console.error("[investigate] extractPlaces failed:", e instanceof Error ? e.message : e);
-    return [];
-  });
-  // Retry with a broader corpus if the first pass found nothing.
+  // ---- PHASE 1: run ALL discovery+crawl tracks in parallel ----
+  emit({ agent: "scout", phase: "working", status: `Mapping ${dest}` });
+  emit({ agent: "pillow", phase: "working", status: "Comparing stays" });
+  emit({ agent: "foodie", phase: "working", status: "Scouting food" });
+  emit({ agent: "gatekeeper", phase: "working", status: "Checking permits & documents" });
+
+  const [overviewPages, placePages, hotelPages, foodPages, permitPages] = await Promise.all([
+    discoverAndCrawl(`${dest} travel guide things to do overview best time`, 5),
+    discoverAndCrawl(`top attractions and places to visit in ${dest} itinerary`, 7),
+    discoverAndCrawl(hotelQuery, 6),
+    discoverAndCrawl(`best restaurants and local food in ${dest} where to eat`, 4),
+    discoverAndCrawl(`permits visa documents required to visit ${dest} entry requirements`, 3),
+  ]);
+
+  // ---- PHASE 2: run ALL extractions in parallel ----
+  const [overview, extractedPlaces0, extractedHotels, extractedFood, extractedPermits] = await Promise.all([
+    extractOverview(dest, overviewPages, signal).catch(() => ({} as Awaited<ReturnType<typeof extractOverview>>)),
+    extractPlaces(dest, [...overviewPages, ...placePages], signal).catch((e) => {
+      console.error("[investigate] extractPlaces failed:", e instanceof Error ? e.message : e);
+      return [];
+    }),
+    extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []),
+    extractFood(dest, foodPages, signal).catch(() => []),
+    extractPermits(dest, permitPages, signal).catch(() => []),
+  ]);
+
+  let extractedPlaces = extractedPlaces0;
   if (extractedPlaces.length === 0) {
     const morePages = await discoverAndCrawl(`famous landmarks beaches temples viewpoints in ${dest}`, 6);
-    extractedPlaces = await extractPlaces(dest, [...placePages, ...morePages], signal).catch((e) => {
-      console.error("[investigate] extractPlaces retry failed:", e instanceof Error ? e.message : e);
-      return [];
-    });
+    extractedPlaces = await extractPlaces(dest, [...placePages, ...morePages], signal).catch(() => []);
   }
   emit({ agent: "scout", phase: "done", status: `Mapped ${dest}`, metric: `${extractedPlaces.length} places` });
+
+  // Hotel extraction sometimes returns empty on the fast model — retry once
+  // with a fresh crawl + default model so stays are never silently missing.
+  let extractedHotelsFinal = extractedHotels;
+  let hotelPagesFinal = hotelPages;
+  if (extractedHotelsFinal.length === 0) {
+    const moreHotelPages = await discoverAndCrawl(`hotels resorts homestays in ${dest} with prices and reviews`, 6);
+    hotelPagesFinal = [...hotelPages, ...moreHotelPages];
+    extractedHotelsFinal = await extractHotels(dest, intent.priorities, hotelPagesFinal, signal).catch(() => []);
+  }
 
   // build Place[] with media + source provenance
   const allPageSourceIds = uniq([...overviewPages, ...placePages].map((p) => sourceIdFor(p.finalUrl || p.url)));
@@ -139,9 +167,10 @@ export async function investigate(
   // parallel with bounded concurrency. Falls back to crawled images, then a
   // neutral placeholder — never a fabricated photo of a real place.
   emit({ agent: "lens", phase: "working", status: "Gathering visitor photos" });
-  const rawWikiPlaceImages = await mapLimited(extractedPlaces, 4, (p) =>
-    fetchWikiImages(`${p.name} ${dest}`, "attraction", 3, signal).catch(() => [])
-  );
+  const [rawWikiPlaceImages, heroImgs] = await Promise.all([
+    mapLimited(extractedPlaces, 6, (p) => fetchWikiImages(`${p.name} ${dest}`, "attraction", 3, signal).catch(() => [])),
+    fetchWikiImages(dest, "landscape", 1, signal).catch(() => []),
+  ]);
   // Dedup images across places so two places don't show the same photo.
   const usedImageUrls = new Set<string>();
   const wikiPlaceImages = rawWikiPlaceImages.map((arr) => {
@@ -183,9 +212,6 @@ export async function investigate(
   const totalPhotos = wikiPhotoCount + placeImages.length;
   emit({ agent: "lens", phase: "done", status: "Photos gathered", metric: `${totalPhotos} images` });
 
-  // Destination hero — prefer a real Wikimedia lead image for the destination.
-  const heroImgs = await fetchWikiImages(dest, "landscape", 1, signal).catch(() => []);
-
   // ---- REEL SCOUT: videos (real if YouTube key, else honest none) ----
   emit({ agent: "reel_scout", phase: "working", status: CAP.youtube ? "Finding useful videos" : "Video API not configured" });
   let videos: VideoAsset[] = [];
@@ -209,41 +235,20 @@ export async function investigate(
   }
   emit({ agent: "reel_scout", phase: "done", status: CAP.youtube ? "Videos found" : "No video source configured", metric: videos.length ? `${videos.length} videos` : undefined });
 
-  // ---- PILLOW + TOILET INSPECTOR + REVIEW DETECTIVE: hotels ----
-  emit({ agent: "pillow", phase: "working", status: "Comparing stays" });
-  const bathFocus = intent.priorities.some((p) => /bath|toilet|hygien|clean/i.test(p));
-  const hotelQuery = bathFocus
-    ? `best clean hotels in ${dest} with good bathrooms reviews cleanliness`
-    : `best hotels to stay in ${dest} reviews price`;
-  const hotelPages = await discoverAndCrawl(hotelQuery, 8);
-  const extractedHotels = await extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []);
-  emit({ agent: "pillow", phase: "done", status: "Stays compared", metric: `${extractedHotels.length} shortlisted` });
+  // ---- PILLOW + REVIEW DETECTIVE: hotels (crawl+extract already done in phase 1/2) ----
+  emit({ agent: "pillow", phase: "done", status: "Stays compared", metric: `${extractedHotelsFinal.length} shortlisted` });
+  if (bathFocus) emit({ agent: "toilet_inspector", phase: "done", status: "Bathroom evidence gathered" });
 
-  if (bathFocus) {
-    emit({ agent: "toilet_inspector", phase: "working", status: "Deep-diving bathroom evidence" });
-    emit({ agent: "toilet_inspector", phase: "done", status: "Bathroom evidence gathered" });
-  }
+  const hotelImages = collectImages(hotelPagesFinal);
+  const hotelSourceIds = uniq(hotelPagesFinal.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 4);
 
+  // Review intel per hotel — run in PARALLEL (was the biggest sequential cost).
+  emit({ agent: "review_detective", phase: "working", status: "Reading recent traveller reviews" });
   const reviews: Record<string, ReviewIntel> = {};
-  const hotelImages = collectImages(hotelPages);
-  const hotels: HotelOption[] = [];
-  emit({ agent: "review_detective", phase: "working", status: "Analyzing reviews" });
-  for (let i = 0; i < extractedHotels.length; i++) {
-    const h = extractedHotels[i];
-    const riId = `ri_${i}`;
-    // aspect-level review intel from crawled review text (best-effort)
-    let intel: ReviewIntel = {
-      entityId: `hotel_${i}`,
-      overall: h.overallRating ?? 4.0,
-      count: h.reviewCount ?? 0,
-      aspects: [],
-      positives: [],
-      negatives: [],
-      trend: "stable",
-    };
+  const reviewIntels = await mapLimited(extractedHotelsFinal, 4, async (h, i) => {
     try {
-      const ri = await extractReviewIntel(h.name, hotelPages, signal);
-      intel = {
+      const ri = await extractReviewIntel(h.name, hotelPagesFinal, signal);
+      return {
         entityId: `hotel_${i}`,
         overall: ri.overall ?? h.overallRating ?? 4.0,
         count: ri.count ?? h.reviewCount ?? 0,
@@ -252,21 +257,33 @@ export async function investigate(
         negatives: ri.negatives,
         recentConcern: ri.recentConcern,
         trend: ri.trend,
-      };
+      } as ReviewIntel;
     } catch {
-      /* keep default */
+      return {
+        entityId: `hotel_${i}`,
+        overall: h.overallRating ?? 4.0,
+        count: h.reviewCount ?? 0,
+        aspects: [],
+        positives: [],
+        negatives: [],
+        trend: "stable",
+      } as ReviewIntel;
     }
-    reviews[riId] = intel;
+  });
 
+  const hotels: HotelOption[] = extractedHotelsFinal.map((h, i) => {
+    const riId = `ri_${i}`;
+    const intel = reviewIntels[i];
+    reviews[riId] = intel;
     const cleanliness = h.cleanliness ?? aspect(intel, "clean") ?? 8.0;
     const bathroomScore = h.bathroomScore ?? aspect(intel, "bath") ?? 7.5;
     const imgs = hotelImages.slice(i * 2, i * 2 + 2);
-    hotels.push({
+    return {
       id: `hotel_${i}`,
       name: h.name,
       location: h.location ?? dest,
       room: h.room ?? "Standard room",
-      pricePerNight: h.pricePerNight ?? estimatePrice(intent.budgetTier),
+      pricePerNight: sanePrice(h.pricePerNight, intent.budgetTier),
       images: imgs.length ? imgs : [placeholderImage("room")],
       videoIds: [],
       cleanliness,
@@ -275,18 +292,15 @@ export async function investigate(
       policies: h.policies ?? [],
       amenities: h.amenities ?? [],
       hasElevator: h.hasElevator ?? false,
-      sourceIds: uniq(hotelPages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 4),
+      sourceIds: hotelSourceIds,
       whyReasons: h.whyReasons?.length ? h.whyReasons : defaultWhy(intent, cleanliness, bathroomScore),
       confidence: 0.72,
-    });
-  }
+    };
+  });
   emit({ agent: "review_detective", phase: "done", status: "Reviews analyzed", metric: `${Object.values(reviews).reduce((s, r) => s + r.count, 0)} reviews` });
 
-  // ---- FOODIE ----
-  emit({ agent: "foodie", phase: "working", status: "Scouting food" });
-  const foodPages = await discoverAndCrawl(`best restaurants and local food in ${dest} where to eat`, 5);
+  // ---- FOODIE (extracted in phase 2) ----
   const foodImages = collectImages(foodPages);
-  const extractedFood = await extractFood(dest, foodPages, signal).catch(() => []);
   const food: FoodPick[] = extractedFood.map((f, i) => ({
     id: `food_${i}`,
     name: f.name,
@@ -298,10 +312,7 @@ export async function investigate(
   }));
   emit({ agent: "foodie", phase: "done", status: "Food scouted", metric: `${food.length} picks` });
 
-  // ---- GATEKEEPER: permits ----
-  emit({ agent: "gatekeeper", phase: "working", status: "Checking permits & documents" });
-  const permitPages = await discoverAndCrawl(`permits visa documents required to visit ${dest} entry requirements`, 4);
-  const extractedPermits = await extractPermits(dest, permitPages, signal).catch(() => []);
+  // ---- GATEKEEPER (extracted in phase 2) ----
   const permits: Permit[] = extractedPermits.map((p, i) => ({
     id: `permit_${i}`,
     name: p.name,
@@ -314,13 +325,13 @@ export async function investigate(
   }));
   emit({ agent: "gatekeeper", phase: "done", status: "Permits checked", metric: `${permits.length}` });
 
-  // ---- CROSS EXAMINER: conflicts ----
+  // ---- CROSS EXAMINER: conflicts (parallel with review intel earlier finish) ----
   emit({ agent: "cross_examiner", phase: "working", status: "Checking for conflicts" });
-  const conflicts = await buildConflicts(dest, hotels[0]?.name, [...overviewPages, ...hotelPages], sourceIdFor, signal);
+  const conflicts = await buildConflicts(dest, hotels[0]?.name, [...overviewPages, ...hotelPagesFinal], sourceIdFor, signal);
   emit({ agent: "cross_examiner", phase: "done", status: "Conflicts flagged", metric: `${conflicts.length}` });
 
   // ---- Evidence packets (grounding the top hotel's key attributes) ----
-  const evidence = buildEvidence(hotels[0], reviews, hotelPages, sourceIdFor);
+  const evidence = buildEvidence(hotels[0], reviews, hotelPagesFinal, sourceIdFor);
 
   const gateway = overview.gateway ?? intent.region ?? `${dest} (nearest airport)`;
 
@@ -476,6 +487,15 @@ function defaultWhy(intent: Intent, clean: number, bath: number): string[] {
 
 function estimatePrice(tier?: string): number {
   return tier === "premium" ? 5500 : tier === "economical" ? 1800 : 3000;
+}
+
+/** Guard against garbage prices (0, ratings, or values expressed in thousands). */
+function sanePrice(price: number | undefined, tier?: string): number {
+  if (price == null || price <= 0) return estimatePrice(tier);
+  if (price < 100) return Math.round(price * 1000); // e.g. 23.6 -> 23,600
+  if (price < 400) return estimatePrice(tier); // ambiguous small number → estimate
+  if (price > 100000) return estimatePrice(tier);
+  return Math.round(price);
 }
 
 function routeOrderFor(cat: string, i: number): number {

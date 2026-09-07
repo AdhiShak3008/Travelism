@@ -1,7 +1,10 @@
 import "server-only";
 import { z } from "zod";
 import { chatJSON } from "./groq";
+import { ENV } from "./env";
 import type { CrawledPage } from "./crawler";
+
+const FAST = ENV.GROQ_MODEL_FAST; // gpt-oss-20b — for simple, high-volume extractions
 
 // ============================================================================
 // Extraction pipeline. Agents do NOT invent user-facing facts. Instead Groq
@@ -47,7 +50,7 @@ ${corpus}`,
       },
     ],
     OverviewSchema,
-    { signal, reasoning: "medium", maxTokens: 1500 }
+    { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
   );
 }
 
@@ -144,7 +147,8 @@ ${corpus}`,
       },
     ],
     HotelsSchema,
-    { signal, reasoning: "medium", maxTokens: 3500 }
+    // Hotels are high-value and price-sensitive — use the stronger model.
+    { signal, reasoning: "low", maxTokens: 4500 }
   );
   return res.hotels;
 }
@@ -182,7 +186,7 @@ ${corpus}`,
       },
     ],
     ReviewSchema,
-    { signal, reasoning: "medium", maxTokens: 2000 }
+    { signal, model: FAST, reasoning: "low", maxTokens: 2000 }
   );
 }
 
@@ -218,7 +222,7 @@ ${corpus}`,
       },
     ],
     PermitsSchema,
-    { signal, reasoning: "medium", maxTokens: 1500 }
+    { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
   );
   return res.permits;
 }
@@ -259,7 +263,7 @@ ${corpus}`,
       },
     ],
     FoodSchema,
-    { signal, reasoning: "medium", maxTokens: 1500 }
+    { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
   );
   return res.food;
 }

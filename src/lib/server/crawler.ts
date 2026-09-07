@@ -37,11 +37,11 @@ const CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12h freshness for crawled pages
 const ROBOTS_CACHE = new Map<string, { robots: ReturnType<typeof robotsParser>; expires: number }>();
 const ROBOTS_TTL_MS = 1000 * 60 * 60 * 24;
 
-// per-domain politeness
+// per-domain politeness (per-host, so parallel cross-domain crawling is fast)
 const lastHit = new Map<string, number>();
-const MIN_DOMAIN_INTERVAL = 900; // ms between requests to the same host
+const MIN_DOMAIN_INTERVAL = 400; // ms between requests to the SAME host
 
-const FETCH_TIMEOUT = 12000;
+const FETCH_TIMEOUT = 9000;
 const MAX_BYTES = 3_000_000; // 3MB cap
 const MAX_TEXT = 16_000; // chars fed downstream
 
