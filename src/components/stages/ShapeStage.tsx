@@ -20,6 +20,7 @@ export function ShapeStage() {
   const setDuration = useTrip((s) => s.setDuration);
   const setTravelers = useTrip((s) => s.setTravelers);
   const setPace = useTrip((s) => s.setPace);
+  const setOrigin = useTrip((s) => s.setOrigin);
   const setStage = useTrip((s) => s.setStage);
 
   if (!dataset) return null;
@@ -71,6 +72,35 @@ export function ShapeStage() {
           <button onClick={() => setTravelers(blob.travelers - 1)} className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-xl text-ink hover:bg-paper-2">−</button>
           <button onClick={() => setTravelers(blob.travelers + 1)} className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-xl text-ink hover:bg-paper-2">+</button>
         </div>
+      </div>
+
+      {/* Flying from */}
+      <div className="card mt-5 p-6">
+        <div className="label-eyebrow mb-2">Flying from</div>
+        <input
+          value={blob.origin}
+          onChange={(e) => setOrigin(e.target.value)}
+          placeholder="Your departure city — e.g. Mumbai"
+          className="w-full rounded-xl border border-line bg-paper px-4 py-3 text-lg text-ink outline-none placeholder:text-ink-faint/70 focus:border-brand/50"
+        />
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {["Delhi", "Mumbai", "Bengaluru", "Hyderabad", "Kolkata", "Chennai"].map((c) => (
+            <button
+              key={c}
+              onClick={() => setOrigin(c)}
+              className={
+                blob.origin.toLowerCase() === c.toLowerCase()
+                  ? "rounded-full bg-brand px-3 py-1 text-xs font-semibold text-paper"
+                  : "rounded-full border border-line-strong bg-paper-2 px-3 py-1 text-xs text-ink-soft hover:text-ink"
+              }
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+        {!blob.origin.trim() && (
+          <p className="mt-2 text-xs text-ink-faint">We&rsquo;ll route your flights from here. Without it, flights just show the destination gateway.</p>
+        )}
       </div>
 
       <div className="mt-6">

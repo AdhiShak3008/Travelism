@@ -436,6 +436,9 @@ export interface TripBlob {
   destinationName: string;
   dream: string;
 
+  /** where the traveller is flying from (their departure city) */
+  origin: string;
+
   travelers: number;
   dates: { start?: ISO; flexible: boolean };
   durationDays: number;
@@ -450,6 +453,8 @@ export interface TripBlob {
   // chosen components (ids reference research layer)
   flight?: FlightOption;
   returnFlight?: FlightOption;
+  /** how the flight estimate was derived (shown honestly in the UI) */
+  flightNote?: string;
   hotels: HotelOption[]; // may be multiple across the route
   transport: TransportOption[];
   activities: ActivityItem[];

@@ -82,6 +82,34 @@ export async function runLiveInvestigation(
   return dataset;
 }
 
+export interface FlightEstimateResult {
+  flights: import("@/lib/types").FlightOption[];
+  meta: {
+    distanceKm: number;
+    durationHours: number;
+    stops: number;
+    domestic: boolean;
+    known: boolean;
+    enriched: boolean;
+    sourceUrl?: string;
+    note: string;
+  };
+}
+
+export async function fetchRouteFlights(origin: string, gateway: string): Promise<FlightEstimateResult | null> {
+  try {
+    const res = await fetch("/api/flights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin, gateway }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as FlightEstimateResult;
+  } catch {
+    return null;
+  }
+}
+
 export interface RefineResult {
   places: import("@/lib/types").Place[];
   sources: Record<string, import("@/lib/types").Source>;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { useTrip } from "@/store/tripStore";
@@ -13,12 +13,34 @@ const SUGGESTIONS = [
   "Coorg coffee country, quiet and easy",
 ];
 
-const HERO =
-  "https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&w=1600&q=75";
+// A rotating set of real travel photos for the cover — one is picked at random
+// each time the landing mounts, so the "brochure cover" feels fresh.
+const COVERS = [
+  { id: "photo-1544735716-392fe2489ffa", stamp: "Himalaya · Field notes", caption: "Somewhere worth the trip" },
+  { id: "photo-1506905925346-21bda4d32df4", stamp: "Mountains · Field notes", caption: "Where the road climbs" },
+  { id: "photo-1469854523086-cc02fe5d8800", stamp: "Coastline · Field notes", caption: "Salt air and slow days" },
+  { id: "photo-1502602898657-3e91760cbb34", stamp: "Cities · Field notes", caption: "Streets worth getting lost in" },
+  { id: "photo-1526772662000-3f88f10405ff", stamp: "Temples · Field notes", caption: "Quiet, ancient corners" },
+  { id: "photo-1439066615861-d1af74d74000", stamp: "Lakes · Field notes", caption: "Still water, big sky" },
+  { id: "photo-1470770841072-f978cf4d019e", stamp: "Wild · Field notes", caption: "Off the beaten path" },
+  { id: "photo-1476514525535-07fb3b4ae5f1", stamp: "Forests · Field notes", caption: "Green, cool and unhurried" },
+  { id: "photo-1512100356356-de1b84283e18", stamp: "Deserts · Field notes", caption: "Endless horizons" },
+  { id: "photo-1454496522488-7a8e488e8606", stamp: "Peaks · Field notes", caption: "Above the clouds" },
+];
+
+function coverUrl(id: string): string {
+  return `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1200&q=75`;
+}
 
 export function DreamStage() {
   const startDream = useTrip((s) => s.startDream);
   const [text, setText] = useState("");
+  // start deterministic (no hydration mismatch), then pick a fresh cover on mount
+  const [coverIdx, setCoverIdx] = useState(0);
+  useEffect(() => {
+    setCoverIdx(Math.floor(Math.random() * COVERS.length));
+  }, []);
+  const cover = COVERS[coverIdx];
 
   return (
     <div className="relative min-h-screen">
@@ -98,11 +120,11 @@ export function DreamStage() {
           >
             <div className="rounded-[20px] border border-line bg-card p-3 shadow-lift">
               <div className="relative aspect-[3/4] overflow-hidden rounded-xl">
-                <Image src={HERO} alt="A mountain valley" fill priority className="object-cover" unoptimized />
-                <div className="absolute left-3 top-3 stamp !bg-paper/85 backdrop-blur">Himalaya · Field notes</div>
+                <Image src={coverUrl(cover.id)} alt={cover.caption} fill priority className="object-cover" unoptimized />
+                <div className="absolute left-3 top-3 stamp !bg-paper/85 backdrop-blur">{cover.stamp}</div>
               </div>
               <div className="flex items-center justify-between px-1 pb-1 pt-3">
-                <div className="display text-lg text-ink">Somewhere worth the trip</div>
+                <div className="display text-lg text-ink">{cover.caption}</div>
                 <div className="text-xs text-ink-faint">est. 2026</div>
               </div>
             </div>

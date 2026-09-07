@@ -31,7 +31,7 @@ import {
   structuredCloneBlob,
 } from "@/lib/engine";
 import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
-import { runLiveInvestigation, runRefine, fetchCapabilities, type LiveProgress } from "@/lib/liveClient";
+import { runLiveInvestigation, runRefine, fetchCapabilities, fetchRouteFlights, type LiveProgress } from "@/lib/liveClient";
 import { registerSources } from "@/lib/research/sourceRegistry";
 import { routeInstruction } from "@/lib/concierge";
 
@@ -67,6 +67,7 @@ function emptyBlob(): TripBlob {
     destinationId: null,
     destinationName: "",
     dream: "",
+    origin: "",
     travelers: 2,
     dates: { flexible: true },
     durationDays: 7,
@@ -109,6 +110,8 @@ interface TripStore {
   toggleSelectPlace: (placeId: string) => void;
   setDuration: (days: number) => void;
   setTravelers: (n: number) => void;
+  setOrigin: (city: string) => void;
+  refreshFlights: () => Promise<void>;
   setPace: (pace: Preferences["pace"]) => void;
   setMoodKey: (key: MoodKey, value: number) => void;
 
@@ -168,6 +171,7 @@ export const useTrip = create<TripStore>((set, get) => ({
     const baseBlob: TripBlob = {
       ...emptyBlob(),
       dream,
+      origin: extractOrigin(dream),
       mood,
       preferences: prefs,
       travelers: prefs.travelers,
@@ -258,6 +262,34 @@ export const useTrip = create<TripStore>((set, get) => ({
     const t = Math.max(1, Math.min(8, n));
     set({ blob: { ...blob, travelers: t, preferences: { ...blob.preferences, travelers: t }, updatedAt: now() } });
     if (blob.hotels.length) get().recompute();
+  },
+
+  setOrigin: (city) => {
+    const { blob, dataset } = get();
+    set({ blob: { ...blob, origin: city, updatedAt: now() } });
+    if (!dataset) return;
+    // Fetch honest route-aware flight estimates for origin → gateway.
+    // Fire-and-forget; updates flights + costs when it resolves.
+    void get().refreshFlights();
+  },
+
+  refreshFlights: async () => {
+    const { blob, dataset } = get();
+    if (!dataset) return;
+    const gateway = dataset.meta.gateway;
+    const result = await fetchRouteFlights(blob.origin ?? "", gateway);
+    if (!result || !result.flights.length) return;
+    const cur = get().blob;
+    // preserve locked flights; otherwise take the fresh estimates
+    const outLocked = cur.flight && cur.lockedComponentIds.includes(cur.flight.id);
+    const retLocked = cur.returnFlight && cur.lockedComponentIds.includes(cur.returnFlight.id);
+    const gw = gateway.split(/[(,]/)[0].trim().toLowerCase();
+    const isOut = (f: (typeof result.flights)[number]) => f.to.toLowerCase().includes(gw) || f.id.includes("out");
+    const nextOut = outLocked ? cur.flight : result.flights.filter(isOut)[0];
+    const nextRet = retLocked ? cur.returnFlight : result.flights.filter((f) => !isOut(f))[0];
+    let next: TripBlob = { ...cur, flight: nextOut, returnFlight: nextRet, flightNote: result.meta.note, updatedAt: now() };
+    next.costs = computeCosts(next);
+    set({ blob: next });
   },
 
   setPace: (pace) => {
@@ -390,8 +422,13 @@ export const useTrip = create<TripStore>((set, get) => ({
     const outbound = dataset.flights.filter(isOutbound).filter(notEarly);
     const returns = dataset.flights.filter((f) => !isOutbound(f));
     const pick = (arr: typeof dataset.flights) => arr.sort((a, b) => (wantCheap ? a.fare - b.fare : b.fare - a.fare))[0];
-    const flight = pick(outbound) ?? pick(dataset.flights.filter(isOutbound)) ?? dataset.flights[0];
-    const returnFlight = pick(returns.filter(notEarly)) ?? pick(returns) ?? dataset.flights[1];
+    const gatewayCity = dataset.meta.gateway.split(/[(,]/)[0].trim();
+    const origin = blob.origin?.trim() || "Your city";
+    // Label the chosen flights with the traveller's real origin.
+    const labelOut = (f?: (typeof dataset.flights)[number]) => (f ? { ...f, from: origin, to: gatewayCity } : f);
+    const labelRet = (f?: (typeof dataset.flights)[number]) => (f ? { ...f, from: gatewayCity, to: origin } : f);
+    const flight = labelOut(pick(outbound) ?? pick(dataset.flights.filter(isOutbound)) ?? dataset.flights[0]);
+    const returnFlight = labelRet(pick(returns.filter(notEarly)) ?? pick(returns) ?? dataset.flights[1]);
 
     // Choose hotel: rank by priorities
     const hotel = rankHotels(blob, dataset)[0];
@@ -432,6 +469,8 @@ export const useTrip = create<TripStore>((set, get) => ({
     next.itinerary = buildItinerary(next, dataset);
     next.costs = computeCosts(next);
     set({ blob: next });
+    // Upgrade the placeholder flights to honest route-aware estimates.
+    void get().refreshFlights();
   },
 
   chooseHotel: (hotel, replaceId) => {
@@ -717,6 +756,17 @@ export const useTrip = create<TripStore>((set, get) => ({
 // ---------------------------------------------------------------------------
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Best-effort origin extraction from the dream, e.g. "from Mumbai". */
+function extractOrigin(dream: string): string {
+  const m = dream.match(/\bfrom\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)/);
+  if (m) {
+    const cand = m[1].trim();
+    // avoid capturing "from the mountains" etc.
+    if (!/^(the|a|an|my|our|here|home)$/i.test(cand)) return cand;
+  }
+  return "";
 }
 
 const STAGE_RANK: Record<Stage, number> = {

@@ -43,6 +43,7 @@ export function FlightCard({ flight, kind }: { flight: FlightOption; kind: "out"
   const dataset = useTrip((s) => s.dataset);
   const chooseFlight = useTrip((s) => s.chooseFlight);
   const toggleLock = useTrip((s) => s.toggleLock);
+  const flightNote = useTrip((s) => s.blob.flightNote);
   const locked = useTrip((s) => s.blob.lockedComponentIds.includes(flight.id));
   const [alts, setAlts] = useState(false);
   // options going the same direction
@@ -81,7 +82,7 @@ export function FlightCard({ flight, kind }: { flight: FlightOption; kind: "out"
 
       {flight.estimated && (
         <div className="mt-3 rounded-lg border border-terra/25 bg-terra/[0.06] px-3 py-1.5 text-[11px] text-terra">
-          Fare band estimated for this sector. Connect a live flights source for exact schedules and prices.
+          {flightNote ?? "Estimated for this route"} — not a live fare. Times are indicative; duration &amp; stops are the reliable signal.
         </div>
       )}
 
