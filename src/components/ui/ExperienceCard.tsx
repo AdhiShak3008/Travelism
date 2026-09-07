@@ -84,21 +84,21 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
           </div>
         )}
         <div className="absolute left-3 top-3 flex gap-1.5">
-          <span className="stamp !bg-white/85 backdrop-blur">{CATEGORY_LABEL[exp.category]}</span>
+          <span className={cx("stamp backdrop-blur", hasImage ? "!bg-white/85" : "!bg-card")}>{CATEGORY_LABEL[exp.category]}</span>
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); toggle(exp.id); }}
           className={cx(
             "absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full border text-base transition active:scale-90",
-            selected ? "border-brand bg-brand text-paper" : "border-white/60 bg-white/80 text-ink backdrop-blur hover:bg-white"
+            selected ? "border-brand bg-brand text-paper" : "border-line bg-card text-ink backdrop-blur hover:bg-paper-2"
           )}
           aria-label={selected ? "Remove" : "Add to trip"}
         >
           {selected ? "✓" : "+"}
         </button>
         <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2">
-          <h3 className={cx("display min-w-0 text-lg font-semibold drop-shadow", hasImage ? "text-white" : "text-ink")}>{exp.name}</h3>
-          <div className="shrink-0 rounded-lg bg-white/90 px-2.5 py-1 text-right">
+          <h3 className={cx("display min-w-0 text-lg font-semibold", hasImage ? "text-white drop-shadow" : "text-ink")}>{exp.name}</h3>
+          <div className="shrink-0 rounded-lg border border-line bg-card px-2.5 py-1 text-right shadow-card">
             <div className="text-sm font-bold text-ink">{priceLabel}</div>
             {hasPrice && <div className="text-[9px] uppercase text-ink-faint">{exp.perPerson ? "per person" : "per group"}</div>}
           </div>

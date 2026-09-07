@@ -342,13 +342,11 @@ export async function investigate(
   emit({ agent: "foodie", phase: "done", status: "Food scouted", metric: `${food.length} picks` });
 
   // ---- Experiences (bookable things to do, with prices) ----
+  // Free image sources are unreliable for specific activities (they return tiny
+  // icons / repeated illustrations), so experiences render as clean, honest
+  // category cards in the UI rather than a mismatched or broken photo.
   emit({ agent: "daydreamer", phase: "working", status: "Finding things to do" });
   const expSourceIds = uniq(experiencePages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 3);
-  // Fetch photos of the ACTIVITY TYPE (not the destination) so cards aren't
-  // mismatched. Empty result → UI shows a clean category card, never a wrong photo.
-  const expWiki = await mapLimited(extractedExperiences, 4, (e) =>
-    fetchWikiImages(activityImageQuery(e.name, e.category), "attraction", 1, signal).catch(() => [])
-  );
   const experiences: Experience[] = extractedExperiences.map((e, i) => ({
     id: `exp_${i}`,
     name: e.name,
@@ -363,7 +361,7 @@ export async function investigate(
     familyFriendly: e.familyFriendly,
     minAge: e.minAge,
     location: e.location ?? dest,
-    images: expWiki[i] ?? [],
+    images: [],
     whyRecommended: e.whyRecommended,
     sourceIds: expSourceIds,
     estimated: !e.price,
@@ -559,53 +557,6 @@ function staySearchLocus(dest: string, intent: Intent): string {
     return `the most popular tourist city in ${dest}`;
   }
   return dest;
-}
-
-// Map an experience to a search term for a RELEVANT activity photo (generic
-// stock of the activity type), not the destination — avoids mismatched images.
-const ACTIVITY_KEYWORDS: { test: RegExp; q: string }[] = [
-  { test: /paraglid/i, q: "paragliding" },
-  { test: /zip.?lin/i, q: "zipline" },
-  { test: /raft/i, q: "white water rafting" },
-  { test: /scuba|dive|snorkel/i, q: "scuba diving underwater" },
-  { test: /balloon/i, q: "hot air balloon" },
-  { test: /go.?kart/i, q: "go kart racing" },
-  { test: /bungee/i, q: "bungee jumping" },
-  { test: /paintball/i, q: "paintball" },
-  { test: /laser tag/i, q: "laser tag arena" },
-  { test: /zorbing/i, q: "zorbing ball" },
-  { test: /rock climb|climbing/i, q: "rock climbing" },
-  { test: /trek|hike|hiking/i, q: "mountain trekking hikers" },
-  { test: /safari|wildlife|jungle/i, q: "wildlife safari jeep" },
-  { test: /ski|snowboard/i, q: "skiing snow" },
-  { test: /kayak/i, q: "kayaking" },
-  { test: /surf/i, q: "surfing wave" },
-  { test: /jet ?ski/i, q: "jet ski" },
-  { test: /parasail/i, q: "parasailing beach" },
-  { test: /yak|camel|elephant|horse ride/i, q: "animal ride tourism" },
-  { test: /boat|cruise|ferry|houseboat/i, q: "boat cruise" },
-  { test: /theme park|amusement|water park|disney|universal/i, q: "amusement park rides" },
-  { test: /film city|studio/i, q: "film studio set" },
-  { test: /cook|culinary|food tour|tasting/i, q: "food cooking class" },
-  { test: /spa|wellness|yoga|massage/i, q: "spa wellness" },
-  { test: /museum|gallery|heritage|temple|palace|fort/i, q: "heritage architecture" },
-];
-
-const CATEGORY_FALLBACK_Q: Record<string, string> = {
-  theme_park: "amusement park",
-  water: "water sports beach",
-  adventure: "adventure sports outdoor",
-  wildlife: "wildlife safari",
-  tour: "sightseeing tour",
-  cultural: "cultural heritage",
-  wellness: "spa wellness",
-  food_exp: "local food",
-  nightlife: "city nightlife",
-};
-
-function activityImageQuery(name: string, category?: string): string {
-  for (const k of ACTIVITY_KEYWORDS) if (k.test.test(name)) return k.q;
-  return CATEGORY_FALLBACK_Q[category ?? "tour"] ?? "travel activity";
 }
 
 /** Guard experience prices; 0 = free (kept), tiny/huge = treat as unknown (0). */

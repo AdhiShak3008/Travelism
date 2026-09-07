@@ -44,17 +44,21 @@ export function PlaceCard({ place }: { place: Place }) {
     >
       {/* Postcard photo */}
       <div
-        className="relative aspect-[16/10] cursor-zoom-in overflow-hidden"
+        className="relative aspect-[16/10] cursor-zoom-in overflow-hidden bg-gradient-to-br from-brand/20 to-paper-3"
         onClick={() => place.images[0]?.url && lightbox.open(place.images, 0, place.canonicalName)}
       >
-        <Image
-          src={place.images[0]?.url}
-          alt={place.canonicalName}
-          fill
-          sizes="(max-width: 768px) 100vw, 420px"
-          className="object-cover transition duration-700 group-hover:scale-[1.04]"
-          unoptimized
-        />
+        {place.images[0]?.url ? (
+          <Image
+            src={place.images[0].url}
+            alt={place.canonicalName}
+            fill
+            sizes="(max-width: 768px) 100vw, 420px"
+            className="object-cover transition duration-700 group-hover:scale-[1.04]"
+            unoptimized
+          />
+        ) : (
+          <div className="absolute inset-0 grid place-items-center text-4xl opacity-60">📍</div>
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
         <div className="absolute left-3 top-3 flex gap-1.5">
           <span className="stamp !bg-white/85 backdrop-blur">{CATEGORY_LABEL[place.category]}</span>
