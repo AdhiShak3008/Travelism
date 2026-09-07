@@ -26,12 +26,39 @@ const DIFF_TONE: Record<string, string> = {
   hard: "text-bad",
 };
 
+// Clean category glyph + tint used when we have no real activity photo —
+// intentional and honest, never a mismatched destination image.
+const CATEGORY_GLYPH: Record<Experience["category"], string> = {
+  theme_park: "🎢",
+  water: "🌊",
+  adventure: "🧗",
+  wildlife: "🦁",
+  tour: "🧭",
+  cultural: "🛕",
+  wellness: "🧘",
+  food_exp: "🍽️",
+  nightlife: "🌃",
+};
+const CATEGORY_TINT: Record<Experience["category"], string> = {
+  theme_park: "from-terra/25 to-gold/15",
+  water: "from-brand/25 to-brand/5",
+  adventure: "from-terra/25 to-brand/10",
+  wildlife: "from-good/20 to-gold/10",
+  tour: "from-brand/20 to-paper-3",
+  cultural: "from-gold/20 to-terra/10",
+  wellness: "from-brand/15 to-good/10",
+  food_exp: "from-gold/25 to-terra/10",
+  nightlife: "from-ink-soft/20 to-paper-3",
+};
+
 export function ExperienceCard({ exp }: { exp: Experience }) {
   const selected = useTrip((s) => s.blob.selectedExperienceIds.includes(exp.id));
   const toggle = useTrip((s) => s.toggleExperience);
   const lightbox = useLightbox();
 
-  const priceLabel = exp.price > 0 ? inr(exp.price) : "Free";
+  const hasPrice = exp.price > 0;
+  const priceLabel = hasPrice ? inr(exp.price) : exp.price === 0 && exp.priceNote?.includes("free") ? "Free" : "Price on booking";
+  const hasImage = !!exp.images[0]?.url;
 
   return (
     <motion.div
@@ -42,18 +69,22 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
       )}
     >
       <div
-        className="relative aspect-[16/10] cursor-zoom-in overflow-hidden bg-paper-2"
-        onClick={() => exp.images[0]?.url && lightbox.open(exp.images, 0, exp.name)}
+        className={cx("relative aspect-[16/10] overflow-hidden", hasImage && "cursor-zoom-in")}
+        onClick={() => hasImage && lightbox.open(exp.images, 0, exp.name)}
       >
-        {exp.images[0]?.url ? (
-          <Image src={exp.images[0].url} alt={exp.name} fill sizes="420px" className="object-cover transition duration-700 group-hover:scale-[1.04]" unoptimized />
+        {hasImage ? (
+          <>
+            <Image src={exp.images[0].url} alt={exp.name} fill sizes="420px" className="object-cover transition duration-700 group-hover:scale-[1.04]" unoptimized />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+          </>
         ) : (
-          <div className="grid h-full place-items-center text-3xl">🎟️</div>
+          // clean category card — honest, never a mismatched photo
+          <div className={cx("absolute inset-0 grid place-items-center bg-gradient-to-br", CATEGORY_TINT[exp.category])}>
+            <span className="text-5xl opacity-70">{CATEGORY_GLYPH[exp.category]}</span>
+          </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
         <div className="absolute left-3 top-3 flex gap-1.5">
           <span className="stamp !bg-white/85 backdrop-blur">{CATEGORY_LABEL[exp.category]}</span>
-          {exp.estimated && <span className="stamp !border-terra/60 !text-terra !bg-white/85 backdrop-blur">est. price</span>}
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); toggle(exp.id); }}
@@ -65,13 +96,11 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
         >
           {selected ? "✓" : "+"}
         </button>
-        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between">
-          <div className="min-w-0">
-            <h3 className="display text-lg font-semibold text-white drop-shadow">{exp.name}</h3>
-          </div>
+        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2">
+          <h3 className={cx("display min-w-0 text-lg font-semibold drop-shadow", hasImage ? "text-white" : "text-ink")}>{exp.name}</h3>
           <div className="shrink-0 rounded-lg bg-white/90 px-2.5 py-1 text-right">
             <div className="text-sm font-bold text-ink">{priceLabel}</div>
-            <div className="text-[9px] uppercase text-ink-faint">{exp.perPerson ? "per person" : "per group"}</div>
+            {hasPrice && <div className="text-[9px] uppercase text-ink-faint">{exp.perPerson ? "per person" : "per group"}</div>}
           </div>
         </div>
       </div>
@@ -88,7 +117,10 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
           )}
           {exp.minAge ? <span>Min age {exp.minAge}</span> : null}
         </div>
-        {exp.priceNote && <div className="mt-2 text-[11px] text-ink-faint">{exp.priceNote}</div>}
+        {exp.priceNote && !/original price|before discount|discount/i.test(exp.priceNote) && (
+          <div className="mt-2 text-[11px] text-ink-faint">{exp.priceNote}</div>
+        )}
+        {!hasPrice && <div className="mt-2 text-[11px] text-ink-faint">Price shown at booking</div>}
         <div className="mt-3 flex items-center justify-between">
           <SourceChips sourceIds={exp.sourceIds.slice(0, 2)} />
           <button
