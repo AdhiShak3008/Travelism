@@ -183,11 +183,11 @@ export async function investigate(
 
   // build Place[] with media + source provenance
   const allPageSourceIds = uniq([...overviewPages, ...placePages].map((p) => sourceIdFor(p.finalUrl || p.url)));
-  const placeImages = collectImages([...overviewPages, ...placePages]);
 
-  // Fetch real, licensed photos per place from Wikimedia (free, no key), in
-  // parallel with bounded concurrency. Falls back to crawled images, then a
-  // neutral placeholder — never a fabricated photo of a real place.
+  // Fetch real, licensed, SUBJECT-MATCHED photos per place from Wikimedia.
+  // We intentionally do NOT backfill with crawled page images — those are
+  // index-matched, not content-matched, and produce mismatches (e.g. a roast
+  // chicken for "Magnetic Hill"). No Wikimedia photo → clean placeholder card.
   emit({ agent: "lens", phase: "working", status: "Gathering visitor photos" });
   const [rawWikiPlaceImages, heroImgs] = await Promise.all([
     mapLimited(extractedPlaces, 6, (p) => fetchWikiImages(`${p.name} ${dest}`, "attraction", 3, signal).catch(() => [])),
@@ -203,9 +203,7 @@ export async function investigate(
   });
 
   const places: Place[] = extractedPlaces.map((p, i) => {
-    const wiki = wikiPlaceImages[i] ?? [];
-    const crawled = placeImages.slice(i * 2, i * 2 + 2);
-    const imgs = [...wiki, ...crawled].slice(0, 4);
+    const wiki = (wikiPlaceImages[i] ?? []).slice(0, 4);
     return {
       id: `place_${i}_${destinationKey(p.name)}`,
       canonicalName: p.name,
@@ -213,7 +211,7 @@ export async function investigate(
       category: p.category ?? "core",
       blurb: p.blurb,
       description: p.description ?? p.blurb,
-      images: imgs.length ? imgs : [placeholderImage("attraction")],
+      images: wiki, // may be empty → PlaceCard shows a clean placeholder
       videoIds: [],
       durationHours: p.durationHours ?? 2,
       distanceKm: p.distanceKm,
@@ -230,9 +228,8 @@ export async function investigate(
     };
   });
 
-  // ---- LENS: real Wikimedia photos + crawled images ----
-  const wikiPhotoCount = wikiPlaceImages.reduce((s, arr) => s + arr.length, 0);
-  const totalPhotos = wikiPhotoCount + placeImages.length;
+  // ---- LENS: real Wikimedia photos ----
+  const totalPhotos = wikiPlaceImages.reduce((s, arr) => s + arr.length, 0);
   emit({ agent: "lens", phase: "done", status: "Photos gathered", metric: `${totalPhotos} images` });
 
   // ---- REEL SCOUT: videos (real if YouTube key, else honest none) ----
@@ -399,7 +396,7 @@ export async function investigate(
       tagline: overview.tagline ?? `Discover ${dest}.`,
       region: overview.region ?? intent.region ?? "",
       gateway,
-      hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? placeImages[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape").url,
+      hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape").url,
       bestSeason: overview.bestSeason ?? "Shoulder seasons",
       facts: overview.facts ?? [],
     },
