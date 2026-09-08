@@ -41,8 +41,8 @@ export const CAP = {
   flights: !!ENV.AMADEUS_CLIENT_ID && !!ENV.AMADEUS_CLIENT_SECRET,
 } as const;
 
-/** Live investigation possible when we can both reason and discover. */
-export const CAN_INVESTIGATE_LIVE = CAP.llm && CAP.search;
+/** Live investigation possible when we can reason (Groq LLM). Search engines enrich when present. */
+export const CAN_INVESTIGATE_LIVE = CAP.llm;
 
 export function capabilitySummary() {
   return {

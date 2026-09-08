@@ -130,8 +130,29 @@ class MockResearchProvider implements ResearchProvider {
     for (const d of GENERIC_DESTINATIONS) {
       if (t.includes(d.name.toLowerCase())) return { id: d.id, name: d.name };
     }
-    // If nothing recognized, default to Tawang as the flagship demo dataset,
-    // but keep the user's phrasing available upstream.
+
+    // Extract likely destination from prompt (e.g. "Miami", "trip to Miami", "explore Miami for 5 days")
+    const match = dream.match(/(?:to|in|visit|explore|trip to|travel to|going to|around)\s+([A-Za-z\s]+?)(?:\s+(?:for|with|in|during|\d+|\bloop\b|\bfrom\b|$))/i);
+    let name = match?.[1]?.trim();
+    if (!name || name.length < 2) {
+      const words = dream.trim().split(/\s+/).filter(
+        (w) => !["i", "want", "to", "go", "a", "the", "for", "in", "trip", "days", "day", "loop", "travel", "explore", "vacation", "holiday"].includes(w.toLowerCase())
+      );
+      if (words.length > 0) {
+        name = words.slice(0, 2).join(" ");
+      }
+    }
+
+    if (name && name.length >= 2) {
+      const formattedName = name
+        .split(/\s+/)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+      const slug = formattedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      return { id: `dest_${slug}`, name: formattedName };
+    }
+
+    // Default fallback
     return { id: "dest_tawang", name: "Tawang" };
   }
 
