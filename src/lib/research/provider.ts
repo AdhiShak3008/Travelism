@@ -123,36 +123,69 @@ function buildTawangEvidence(): { evidence: EvidencePacket[]; conflicts: Conflic
   return { evidence, conflicts };
 }
 
+const POPULAR_DESTINATIONS = [
+  "Miami", "New York", "Los Angeles", "San Francisco", "Las Vegas", "Chicago", "Hawaii", "Orlando", "Seattle", "Austin", "Boston",
+  "Paris", "London", "Rome", "Barcelona", "Amsterdam", "Berlin", "Venice", "Florence", "Madrid", "Prague", "Vienna", "Lisbon", "Athens", "Santorini", "Swiss Alps", "Switzerland", "Iceland", "Norway",
+  "Tokyo", "Kyoto", "Osaka", "Seoul", "Bangkok", "Phuket", "Bali", "Singapore", "Dubai", "Abu Dhabi", "Vietnam", "Hanoi", "Da Nang", "Hong Kong", "Maldives",
+  "Goa", "Tawang", "Ladakh", "Leh", "Spiti", "Manali", "Shimla", "Dharamshala", "Rishikesh", "Varanasi", "Jaipur", "Udaipur", "Jodhpur", "Kerala", "Munnar", "Meghalaya", "Shillong", "Coorg", "Ooty", "Hampi", "Andaman", "Kashmir", "Srinagar", "Gulmarg"
+];
+
 class MockResearchProvider implements ResearchProvider {
   resolveDestination(dream: string): { id: string; name: string } | null {
     const t = dream.toLowerCase();
-    if (t.includes("tawang")) return { id: "dest_tawang", name: "Tawang" };
+
+    // 1. Direct match against known destinations
+    for (const dest of POPULAR_DESTINATIONS) {
+      const regex = new RegExp(`\\b${dest.toLowerCase()}\\b`, "i");
+      if (regex.test(t)) {
+        const slug = dest.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        return { id: `dest_${slug}`, name: dest };
+      }
+    }
+
     for (const d of GENERIC_DESTINATIONS) {
       if (t.includes(d.name.toLowerCase())) return { id: d.id, name: d.name };
     }
 
-    // Extract likely destination from prompt (e.g. "Miami", "trip to Miami", "explore Miami for 5 days")
-    const match = dream.match(/(?:to|in|visit|explore|trip to|travel to|going to|around)\s+([A-Za-z\s]+?)(?:\s+(?:for|with|in|during|\d+|\bloop\b|\bfrom\b|$))/i);
-    let name = match?.[1]?.trim();
-    if (!name || name.length < 2) {
-      const words = dream.trim().split(/\s+/).filter(
-        (w) => !["i", "want", "to", "go", "a", "the", "for", "in", "trip", "days", "day", "loop", "travel", "explore", "vacation", "holiday"].includes(w.toLowerCase())
-      );
-      if (words.length > 0) {
-        name = words.slice(0, 2).join(" ");
+    // 2. Strip common filler phrases before matching
+    const cleaned = dream
+      .replace(/as many (?:places|sights|spots|locations) as possible/gi, "")
+      .replace(/as much as possible/gi, "")
+      .replace(/cheap (?:flights|hotels|stays)/gi, "")
+      .replace(/clean (?:bathrooms|rooms|hotels)/gi, "")
+      .replace(/no (?:crazy|rushed|hurried) itinerary/gi, "")
+      .replace(/good food|local food|great scenery|beautiful views/gi, "")
+      .replace(/for (?:a week|\d+ days|\d+ weeks)/gi, "")
+      .replace(/with (?:my friends|family|wife|husband|kids|\d+ people)/gi, "")
+      .trim();
+
+    // 3. Match preposition patterns (e.g. "trip to Miami", "explore Miami", "visit Miami")
+    const prepMatch = cleaned.match(/(?:trip to|travel to|going to|head to|fly to|flight to|explore|visit|in|to)\s+([A-Za-z\s]+?)(?:\s+(?:and|with|for|during|on|without|including|,|\.|$))/i);
+    if (prepMatch?.[1]) {
+      const candidate = prepMatch[1].trim();
+      const nonFillers = candidate.split(/\s+/).filter(w => !["a", "the", "some", "and", "or", "my", "our"].includes(w.toLowerCase()));
+      if (nonFillers.length > 0 && nonFillers.join(" ").length >= 2) {
+        const formattedName = nonFillers.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+        const slug = formattedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        return { id: `dest_${slug}`, name: formattedName };
       }
     }
 
-    if (name && name.length >= 2) {
-      const formattedName = name
-        .split(/\s+/)
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-        .join(" ");
-      const slug = formattedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      return { id: `dest_${slug}`, name: formattedName };
+    // 4. Token filtering fallback
+    const words = cleaned.split(/\s+/).filter(w => {
+      const lw = w.toLowerCase().replace(/[^a-z]/g, "");
+      return lw.length >= 2 && !["want", "need", "like", "love", "plan", "trip", "vacation", "holiday", "tour", "loop", "days", "week", "month", "hotel", "hotels", "place", "places", "travel", "explore", "visit", "see", "find", "going", "head"].includes(lw);
+    });
+
+    if (words.length > 0) {
+      const candidate = words.slice(0, 2).join(" ").replace(/[^a-zA-Z\s]/g, "").trim();
+      if (candidate.length >= 2) {
+        const formattedName = candidate.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+        const slug = formattedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        return { id: `dest_${slug}`, name: formattedName };
+      }
     }
 
-    // Default fallback
     return { id: "dest_tawang", name: "Tawang" };
   }
 

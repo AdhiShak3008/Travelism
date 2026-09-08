@@ -25,9 +25,9 @@ const daysAgo = (d: number) => new Date(Date.now() - d * 864e5).toISOString();
 
 export function buildGenericDataset(id: string, name: string): DestinationDataset {
   const known = GENERIC_DESTINATIONS.find((d) => d.id === id);
-  const region = known?.region ?? "India";
-  const gateway = known?.gateway ?? "Nearest airport";
-  const tagline = known?.tagline ?? `Discover the landscapes, culture and food of ${name}.`;
+  const region = known?.region ?? `${name}`;
+  const gateway = known?.gateway ?? `${name} Airport / Gateway`;
+  const tagline = known?.tagline ?? `Discover the sights, beaches, culture and food of ${name}.`;
 
   const places: Place[] = [
     {
