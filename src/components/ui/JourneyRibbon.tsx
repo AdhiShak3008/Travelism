@@ -25,17 +25,17 @@ export function JourneyRibbon() {
   ];
 
   return (
-    <div className="no-scrollbar flex items-center gap-1 overflow-x-auto py-2">
+    <div className="flex flex-wrap items-center gap-1.5 py-2">
       {nodes.map((n, i) => (
         <div key={i} className="flex items-center gap-1">
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.06 }}
-            className="flex shrink-0 flex-col items-center gap-1"
+            className="flex flex-col items-center gap-1"
           >
-            <span className="grid h-10 w-10 place-items-center rounded-full border border-line-strong bg-paper-2 text-lg">{n.glyph}</span>
-            <span className="max-w-[72px] truncate text-center text-[11px] text-ink-soft">{n.label}</span>
+            <span className="grid h-10 w-10 place-items-center rounded-full border border-line-strong bg-paper-2 text-lg shadow-2xs">{n.glyph}</span>
+            <span className="max-w-[80px] truncate text-center text-[11px] font-medium text-ink-soft">{n.label}</span>
           </motion.div>
           {i < nodes.length - 1 && <span className="mb-4 text-ink-faint/50">→</span>}
         </div>

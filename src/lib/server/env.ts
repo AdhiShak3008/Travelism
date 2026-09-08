@@ -16,8 +16,10 @@ export const ENV = {
   GROQ_MODEL_FAST: get("GROQ_MODEL_FAST") ?? "openai/gpt-oss-20b",
   TAVILY_API_KEY: get("TAVILY_API_KEY"),
   DATABASE_URL: get("DATABASE_URL"),
-  YOUTUBE_API_KEY: get("YOUTUBE_API_KEY"),
-  GOOGLE_MAPS_API_KEY: get("GOOGLE_MAPS_API_KEY"),
+  YOUTUBE_API_KEY: get("YOUTUBE_API_KEY") ?? get("GOOGLE_SEARCH_API_KEY") ?? get("GOOGLE_API_KEY"),
+  GOOGLE_MAPS_API_KEY: get("GOOGLE_MAPS_API_KEY") ?? get("GOOGLE_API_KEY"),
+  GOOGLE_SEARCH_API_KEY: get("GOOGLE_SEARCH_API_KEY") ?? get("GOOGLE_API_KEY"),
+  GOOGLE_SEARCH_CX: get("GOOGLE_SEARCH_CX") ?? get("GOOGLE_CX"),
   AMADEUS_CLIENT_ID: get("AMADEUS_CLIENT_ID"),
   AMADEUS_CLIENT_SECRET: get("AMADEUS_CLIENT_SECRET"),
 } as const;
@@ -33,6 +35,8 @@ export const CAP = {
   youtube: !!ENV.YOUTUBE_API_KEY,
   /** real places/photos/geo */
   places: !!ENV.GOOGLE_MAPS_API_KEY,
+  /** official Google Image Search engine */
+  googleImages: !!ENV.GOOGLE_SEARCH_API_KEY && !!ENV.GOOGLE_SEARCH_CX,
   /** real flight offers */
   flights: !!ENV.AMADEUS_CLIENT_ID && !!ENV.AMADEUS_CLIENT_SECRET,
 } as const;

@@ -122,6 +122,13 @@ export const AGENTS: Record<AgentId, AgentMeta> = {
     role: "Conflict detection",
     idle: "Idle",
   },
+  cartographer: {
+    id: "cartographer",
+    name: "Cartographer",
+    glyph: "🧭",
+    role: "Interactive maps & route timelines",
+    idle: "Idle",
+  },
   bean_counter: {
     id: "bean_counter",
     name: "Bean Counter",
@@ -144,6 +151,7 @@ export const AGENT_ORDER: AgentId[] = [
   "gatekeeper",
   "weather_witch",
   "daydreamer",
+  "cartographer",
   "penny_pincher",
   "cross_examiner",
   "bean_counter",

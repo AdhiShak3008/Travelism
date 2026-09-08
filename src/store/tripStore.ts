@@ -13,7 +13,10 @@ import type {
   AgentId,
   HotelOption,
   FlightOption,
+  Experience,
   Preferences,
+  ItineraryStop,
+  StayMode,
 } from "@/lib/types";
 import { research, type DestinationDataset } from "@/lib/research/provider";
 import {
@@ -29,6 +32,7 @@ import {
   estimateDaysForPlaces,
   optimizeToBudget,
   structuredCloneBlob,
+  generateDayStopsForType,
 } from "@/lib/engine";
 import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
 import { runLiveInvestigation, runRefine, fetchCapabilities, fetchRouteFlights, type LiveProgress } from "@/lib/liveClient";
@@ -67,7 +71,7 @@ function emptyBlob(): TripBlob {
     destinationId: null,
     destinationName: "",
     dream: "",
-    origin: "",
+    origin: "Hyderabad",
     travelers: 2,
     dates: { flexible: true },
     durationDays: 7,
@@ -105,12 +109,14 @@ interface TripStore {
 
   // flow
   setStage: (s: Stage) => void;
-  goToStage: (s: Stage) => void; // navigation guarded by maxStageReached
+  goToStage: (s: Stage) => void;
   startDream: (dream: string) => Promise<void>;
   refineInvestigation: (text: string) => Promise<void>;
-  liveMode: boolean | null; // null = unknown, true = live pipeline, false = fallback
+  liveMode: boolean | null;
   toggleSelectPlace: (placeId: string) => void;
   toggleExperience: (expId: string) => void;
+  addCustomExperience: (data: { name: string; category?: Experience["category"]; price?: number; blurb?: string; durationHours?: number }) => void;
+  removeCustomExperience: (nameOrId: string) => void;
   setDuration: (days: number) => void;
   setTravelers: (n: number) => void;
   setOrigin: (city: string) => void;
@@ -127,11 +133,20 @@ interface TripStore {
 
   // component actions
   chooseHotel: (hotel: HotelOption, replaceId?: string) => void;
+  setStayMode: (mode: StayMode) => void;
   chooseFlight: (flight: FlightOption, kind: "out" | "return") => void;
   toggleLock: (componentId: string) => void;
 
   // conversational modification
   applyInstruction: (text: string) => void;
+
+  // itinerary day customization
+  setDayFocus: (dayNum: number, dayType: "sightseeing" | "staycation" | "wellness" | "culinary" | "beach") => void;
+  replaceDayStops: (dayNum: number, stops: ItineraryStop[], dayTitle?: string) => void;
+  addCustomStop: (dayNum: number, stop: ItineraryStop) => void;
+  removeStopFromDay: (dayNum: number, stopIndex: number) => void;
+  removeStopByLabel: (dayNum: number, query: string) => void;
+  updateDayTitle: (dayNum: number, title: string) => void;
 
   // checkout
   book: () => void;
@@ -159,34 +174,51 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   goToStage: (s) => {
-    // allow jumping to any stage already reached (or the current one)
     const { maxStageReached } = get();
     if (stageRank(s) <= stageRank(maxStageReached)) set({ stage: s });
   },
 
   startDream: async (dream) => {
-    // parse the dream locally into signals + mood + prefs (instant, no network)
     const signals = parseComment(dream, "trip");
     let mood = { ...DEFAULT_MOOD };
     mood = applyMoodDelta(mood, moodDeltaFromComment(dream));
     const prefs = derivePreferences(signals, { ...DEFAULT_PREFS });
 
+    const extractedOriginCity = extractOrigin(dream) || "Hyderabad";
+    const extractedDuration = extractDuration(dream) || 7;
+    const extractedTrav = extractTravelers(dream) || prefs.travelers || 2;
+
+    const isOutdoor = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent/i.test(dream);
+    const initialStayMode: StayMode = isOutdoor
+      ? "wild_camping"
+      : /no\s*hotel|without\s*hotel/i.test(dream)
+      ? "none"
+      : /campsite|refugio|mountain\s*hut|bothy/i.test(dream)
+      ? "campsites_refugios"
+      : /homestay/i.test(dream)
+      ? "homestays"
+      : "hotels";
+
     const baseBlob: TripBlob = {
       ...emptyBlob(),
       dream,
-      origin: extractOrigin(dream),
+      origin: extractedOriginCity,
+      durationDays: extractedDuration,
+      travelers: extractedTrav,
       mood,
-      preferences: prefs,
-      travelers: prefs.travelers,
+      preferences: {
+        ...prefs,
+        travelers: extractedTrav,
+        stayMode: initialStayMode,
+        isSelfSupported: isOutdoor,
+      },
       signals,
     };
     set({ blob: baseBlob, stage: "investigate", investigating: true });
 
-    // Decide live vs fallback
     const caps = await fetchCapabilities();
     set({ liveMode: caps.live });
 
-    // seed the agent list in queued state
     set({
       agents: AGENT_ORDER.map((id) => ({ ...makeIdleActivity(id, 0.6), phase: "queued", status: "Queued" })),
     });
@@ -213,7 +245,6 @@ export const useTrip = create<TripStore>((set, get) => ({
           conflicts: dataset.conflicts,
           updatedAt: now(),
         };
-        // mark any still-queued agents as done
         set((st) => ({
           blob,
           dataset,
@@ -224,12 +255,11 @@ export const useTrip = create<TripStore>((set, get) => ({
         }));
         return;
       } catch (e) {
-        // Live failed → honest fallback to built-in dataset.
         set({ lastMessage: "Live investigation unavailable — showing built-in intelligence." });
       }
     }
 
-    // Fallback path (no keys or live failed): use built-in dataset.
+    // Fallback path
     const resolved = research.resolveDestination(dream);
     const dest = resolved ?? { id: "dest_tawang", name: "Tawang" };
     const dataset = research.getDataset(dest.id, dest.name);
@@ -258,24 +288,114 @@ export const useTrip = create<TripStore>((set, get) => ({
     const selectedExperienceIds = has
       ? blob.selectedExperienceIds.filter((id) => id !== expId)
       : [...blob.selectedExperienceIds, expId];
-    // keep the chosen Experience[] in sync so cost updates live
     const experiences = (dataset?.experiences ?? []).filter((e) => selectedExperienceIds.includes(e.id));
     let next = { ...blob, selectedExperienceIds, experiences, updatedAt: now() };
     if (blob.hotels.length) next.costs = computeCosts(next);
     set({ blob: next });
   },
 
+  addCustomExperience: (data) => {
+    const { blob, dataset } = get();
+    const expId = `custom_exp_${Date.now()}`;
+    const newExp: Experience = {
+      id: expId,
+      name: data.name,
+      category: (data.category as Experience["category"]) || "adventure",
+      blurb: data.blurb || `Custom planned activity for ${blob.destinationName || "your trip"}.`,
+      price: typeof data.price === "number" ? data.price : 2000,
+      perPerson: true,
+      durationHours: data.durationHours || 3,
+      images: [],
+      sourceIds: [],
+      estimated: true,
+      confidence: 0.95,
+      whyRecommended: "Added via AI Travel Concierge request",
+    };
+
+    let nextDataset = dataset;
+    if (nextDataset) {
+      nextDataset = {
+        ...nextDataset,
+        experiences: [newExp, ...nextDataset.experiences.filter((e) => e.name.toLowerCase() !== data.name.toLowerCase())],
+      };
+    }
+
+    const selectedExperienceIds = Array.from(new Set([...blob.selectedExperienceIds, expId]));
+    const experiences = [newExp, ...blob.experiences.filter((e) => e.name.toLowerCase() !== data.name.toLowerCase())];
+
+    let nextBlob: TripBlob = {
+      ...blob,
+      selectedExperienceIds,
+      experiences,
+      updatedAt: now(),
+    };
+
+    // Insert as a stop in itinerary if days exist
+    if (nextBlob.itinerary.length > 0) {
+      const targetIdx = Math.min(1, nextBlob.itinerary.length - 1);
+      nextBlob.itinerary = nextBlob.itinerary.map((d, di) => {
+        if (di !== targetIdx) return d;
+        return {
+          ...d,
+          stops: [
+            ...d.stops,
+            {
+              kind: "visit" as const,
+              label: data.name,
+              start: "15:30",
+              end: "18:30",
+              note: data.blurb || "Custom activity added by AI Concierge",
+            },
+          ],
+        };
+      });
+    }
+
+    if (nextBlob.hotels.length) {
+      nextBlob.costs = computeCosts(nextBlob);
+    }
+
+    set({
+      dataset: nextDataset,
+      blob: nextBlob,
+    });
+  },
+
+  removeCustomExperience: (nameOrId) => {
+    const { blob, dataset } = get();
+    const target = nameOrId.toLowerCase();
+    const selectedExperienceIds = blob.selectedExperienceIds.filter((id) => {
+      const exp = dataset?.experiences.find((e) => e.id === id);
+      return id !== nameOrId && exp?.name.toLowerCase() !== target;
+    });
+    const experiences = blob.experiences.filter(
+      (e) => e.id !== nameOrId && e.name.toLowerCase() !== target
+    );
+
+    let nextBlob: TripBlob = {
+      ...blob,
+      selectedExperienceIds,
+      experiences,
+      updatedAt: now(),
+    };
+
+    if (nextBlob.hotels.length) {
+      nextBlob.costs = computeCosts(nextBlob);
+    }
+
+    set({ blob: nextBlob });
+  },
+
   setDuration: (days) => {
     const { blob } = get();
-    const next = { ...blob, durationDays: Math.max(2, Math.min(21, days)), updatedAt: now() };
+    const next = { ...blob, durationDays: Math.max(1, Math.min(45, days)), updatedAt: now() };
     set({ blob: next });
-    // targeted recompute if a package already exists
     if (blob.hotels.length) get().recompute();
   },
 
   setTravelers: (n) => {
     const { blob } = get();
-    const t = Math.max(1, Math.min(8, n));
+    const t = Math.max(1, Math.min(20, n));
     set({ blob: { ...blob, travelers: t, preferences: { ...blob.preferences, travelers: t }, updatedAt: now() } });
     if (blob.hotels.length) get().recompute();
   },
@@ -284,8 +404,6 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob, dataset } = get();
     set({ blob: { ...blob, origin: city, updatedAt: now() } });
     if (!dataset) return;
-    // Fetch honest route-aware flight estimates for origin → gateway.
-    // Fire-and-forget; updates flights + costs when it resolves.
     void get().refreshFlights();
   },
 
@@ -293,10 +411,9 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob, dataset } = get();
     if (!dataset) return;
     const gateway = dataset.meta.gateway;
-    const result = await fetchRouteFlights(blob.origin ?? "", gateway);
+    const result = await fetchRouteFlights(blob.origin ?? "Hyderabad", gateway);
     if (!result || !result.flights.length) return;
     const cur = get().blob;
-    // preserve locked flights; otherwise take the fresh estimates
     const outLocked = cur.flight && cur.lockedComponentIds.includes(cur.flight.id);
     const retLocked = cur.returnFlight && cur.lockedComponentIds.includes(cur.returnFlight.id);
     const gw = gateway.split(/[(,]/)[0].trim().toLowerCase();
@@ -337,11 +454,10 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob, dataset, liveMode } = get();
     if (!dataset || !text.trim()) return;
 
-    // Record the steering comment as a signal first (affects ranking too).
     get().addComment(text, "trip");
 
     if (!liveMode) {
-      set({ lastMessage: "Steering noted. Live re-investigation needs the live pipeline (Groq + Tavily)." });
+      set({ lastMessage: "Steering noted. Live re-investigation requires the live pipeline." });
       return;
     }
 
@@ -362,7 +478,6 @@ export const useTrip = create<TripStore>((set, get) => ({
         return;
       }
 
-      // Merge new places + sources into the dataset, re-sorted by route order.
       const mergedPlaces = [...get().dataset!.places, ...result.places].sort((a, b) => a.routeOrder - b.routeOrder);
       const mergedSources = { ...(get().dataset!.sources ?? {}), ...result.sources };
       set((st) => ({
@@ -380,11 +495,9 @@ export const useTrip = create<TripStore>((set, get) => ({
     if (!dataset) return;
     set({ investigating: true, stage: "investigate" });
 
-    // Determine which agents are prioritized by the accumulated signals.
     const priorityAgents = new Set<AgentId>();
     for (const s of blob.signals) s.affectedAgents.forEach((a) => priorityAgents.add(a));
 
-    // Build an ordered activity list, prioritized agents first.
     const order = [...AGENT_ORDER].sort((a, b) => {
       const pa = priorityAgents.has(a) ? 0 : 1;
       const pb = priorityAgents.has(b) ? 0 : 1;
@@ -400,7 +513,6 @@ export const useTrip = create<TripStore>((set, get) => ({
 
     const findings = investigationScript(blob, dataset);
 
-    // Animate each agent working → done
     for (let i = 0; i < order.length; i++) {
       const id = order[i];
       set((st) => ({
@@ -408,9 +520,8 @@ export const useTrip = create<TripStore>((set, get) => ({
           a.id === id ? { ...a, phase: "working", status: findings[id]?.working ?? `${AGENTS[id].role}…` } : a
         ),
       }));
-      // stagger
       // eslint-disable-next-line no-await-in-loop
-      await delay(320 + Math.random() * 260);
+      await delay(280 + Math.random() * 200);
       set((st) => ({
         agents: st.agents.map((a) =>
           a.id === id
@@ -428,8 +539,6 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob, dataset } = get();
     if (!dataset) return;
 
-    // Choose flights per tier + early-flight constraint.
-    // Outbound = heading toward the gateway; return = heading back to origin.
     const wantCheap = blob.preferences.budgetTier === "economical";
     const gwShort = dataset.meta.gateway.split(/[(,]/)[0].trim().toLowerCase();
     const isOutbound = (f: (typeof dataset.flights)[number]) => f.to.toLowerCase().includes(gwShort) || f.id.includes("out");
@@ -439,26 +548,56 @@ export const useTrip = create<TripStore>((set, get) => ({
     const returns = dataset.flights.filter((f) => !isOutbound(f));
     const pick = (arr: typeof dataset.flights) => arr.sort((a, b) => (wantCheap ? a.fare - b.fare : b.fare - a.fare))[0];
     const gatewayCity = dataset.meta.gateway.split(/[(,]/)[0].trim();
-    const origin = blob.origin?.trim() || "Your city";
-    // Label the chosen flights with the traveller's real origin.
+    const origin = blob.origin?.trim() || "Hyderabad";
+
     const labelOut = (f?: (typeof dataset.flights)[number]) => (f ? { ...f, from: origin, to: gatewayCity } : f);
     const labelRet = (f?: (typeof dataset.flights)[number]) => (f ? { ...f, from: gatewayCity, to: origin } : f);
     const flight = labelOut(pick(outbound) ?? pick(dataset.flights.filter(isOutbound)) ?? dataset.flights[0]);
     const returnFlight = labelRet(pick(returns.filter(notEarly)) ?? pick(returns) ?? dataset.flights[1]);
 
-    // Choose hotel: rank by priorities
-    const hotel = rankHotels(blob, dataset)[0];
+    const stayMode = blob.preferences.stayMode || (blob.preferences.isSelfSupported ? "wild_camping" : "hotels");
+    let chosenHotels: HotelOption[] = [];
 
-    // Transport: all legs
+    if (stayMode === "none") {
+      chosenHotels = [];
+    } else if (stayMode === "wild_camping" || blob.preferences.isSelfSupported) {
+      const wildStay = dataset.hotels.find((h) => h.category === "wild_camping" || h.id.includes("wild_camp")) || {
+        id: "stay_wild_camping",
+        name: "Wild Camping & Riverside Bivvies",
+        location: `${dataset.meta.name} Wilderness & Valleys`,
+        room: "Self-Supported Tent Pitch / Bivvy",
+        category: "wild_camping",
+        pricePerNight: 0,
+        images: [
+          {
+            id: "img_wild_camp_0",
+            url: "https://images.unsplash.com/photo-1510312305653-8ed496efae75?auto=format&fit=crop&w=1200&q=80",
+            category: "landscape",
+            credit: "Wilderness Scenery",
+            provenance: "editorial",
+          },
+        ],
+        videoIds: [],
+        cleanliness: 9.5,
+        bathroomScore: 8.0,
+        reviewIntelId: "ri_wild_camp",
+        policies: ["Leave No Trace (LNT) principles apply", "Self-supported: Pack in, pack out all waste"],
+        amenities: ["Zero Accommodation Fee", "Stargazing Pitch", "Glacier Stream Water Source", "Riverside Bivvy Access"],
+        hasElevator: false,
+        sourceIds: ["src_estimate"],
+        whyReasons: ["100% self-supported freedom with ₹0 lodging cost", "Sleep under mountain stars by rivers"],
+        confidence: 0.99,
+      };
+      chosenHotels = [wildStay];
+    } else {
+      const hotel = rankHotels(blob, dataset)[0];
+      chosenHotels = hotel ? [hotel] : [];
+    }
+
     const transport = dataset.transport;
-
-    // Permits from dataset
     const permits = dataset.permits;
+    const food = dataset.food.slice(0, 3);
 
-    // Food picks (top 2)
-    const food = dataset.food.slice(0, 2);
-
-    // Activities from selected places
     const activities = dataset.places
       .filter((p) => blob.selectedPlaceIds.includes(p.id))
       .map((p) => ({
@@ -477,7 +616,7 @@ export const useTrip = create<TripStore>((set, get) => ({
       ...blob,
       flight: flight ?? undefined,
       returnFlight: returnFlight ?? undefined,
-      hotels: hotel ? [hotel] : [],
+      hotels: chosenHotels,
       transport,
       permits,
       food,
@@ -488,8 +627,75 @@ export const useTrip = create<TripStore>((set, get) => ({
     next.itinerary = buildItinerary(next, dataset);
     next.costs = computeCosts(next);
     set({ blob: next });
-    // Upgrade the placeholder flights to honest route-aware estimates.
     void get().refreshFlights();
+  },
+
+  setStayMode: (mode) => {
+    const { blob, dataset } = get();
+    const isOutdoor = mode === "wild_camping" || mode === "campsites_refugios";
+    const isSelfSupported = mode === "wild_camping" || blob.preferences.isSelfSupported;
+    const isNoHotel = mode === "none";
+
+    let hotels = [...blob.hotels];
+    if (isNoHotel) {
+      hotels = [];
+    } else if (mode === "wild_camping") {
+      const wildStay = dataset?.hotels.find((h) => h.category === "wild_camping" || h.id.includes("wild_camp")) || {
+        id: "stay_wild_camping",
+        name: "Wild Camping & Riverside Bivvies",
+        location: `${blob.destinationName || "Wilderness"} Trails & Valleys`,
+        room: "Self-Supported Tent Pitch / Bivvy",
+        category: "wild_camping",
+        pricePerNight: 0,
+        images: [
+          {
+            id: "img_wild_camp_0",
+            url: "https://images.unsplash.com/photo-1510312305653-8ed496efae75?auto=format&fit=crop&w=1200&q=80",
+            category: "landscape",
+            credit: "Wilderness Scenery",
+            provenance: "editorial",
+          },
+        ],
+        videoIds: [],
+        cleanliness: 9.5,
+        bathroomScore: 8.0,
+        reviewIntelId: "ri_wild_camp",
+        policies: ["Leave No Trace (LNT) principles apply", "Self-supported: Pack in, pack out all waste"],
+        amenities: ["Zero Accommodation Fee", "Stargazing Pitch", "Glacier Stream Water Source", "Riverside Bivvy Access"],
+        hasElevator: false,
+        sourceIds: ["src_estimate"],
+        whyReasons: ["100% self-supported freedom with ₹0 lodging cost", "Sleep under mountain stars by rivers"],
+        confidence: 0.99,
+      };
+      hotels = [wildStay];
+    } else if (dataset?.hotels.length) {
+      const candidate = mode === "homestays"
+        ? dataset.hotels.find((h) => h.category === "homestay" || /homestay/i.test(h.name)) || dataset.hotels[0]
+        : dataset.hotels.find((h) => h.category !== "wild_camping") || dataset.hotels[0];
+      hotels = candidate ? [candidate] : [];
+    }
+
+    const nextPrefs: Preferences = {
+      ...blob.preferences,
+      stayMode: mode,
+      isSelfSupported,
+    };
+
+    let next = { ...blob, hotels, preferences: nextPrefs, updatedAt: now() };
+    next.costs = computeCosts(next);
+    set({ blob: next });
+    get().pushMutation({
+      id: `mut_${Date.now()}`,
+      at: now(),
+      summary: `Stay mode changed to ${mode.replace("_", " ").toUpperCase()}`,
+      deltas: [
+        mode === "wild_camping"
+          ? "Switched to Wild Camping (₹0 lodging)"
+          : mode === "none"
+          ? "Removed all hotel accommodation"
+          : `Selected stay style: ${mode}`,
+      ],
+    });
   },
 
   chooseHotel: (hotel, replaceId) => {
@@ -533,7 +739,7 @@ export const useTrip = create<TripStore>((set, get) => ({
     get().pushMutation({
       id: `mut_${Date.now()}`,
       at: now(),
-      summary: `${kind === "out" ? "Outbound" : "Return"} flight → ${flight.airline} ${flight.flightNo}`,
+      summary: `${kind === "out" ? "Outbound" : "Return"} flight → ${flight.airline} (${flight.duration})`,
       deltas: [after > before ? `Cost ↑ ₹${(after - before).toLocaleString("en-IN")}` : `Cost ↓ ₹${(before - after).toLocaleString("en-IN")}`],
       costBefore: before,
       costAfter: after,
@@ -557,13 +763,11 @@ export const useTrip = create<TripStore>((set, get) => ({
     const before = costTotals(blob.costs).total;
     const money = (n: number) => `₹${Math.round(Math.abs(n)).toLocaleString("en-IN")}`;
 
-    // A pure question — answer, change nothing.
     if (action.kind === "answer") {
       set({ lastMessage: action.text });
       return;
     }
 
-    // Budget optimizations delegate to the deterministic optimizer.
     if (action.kind === "budget_target") {
       const res = optimizeToBudget(blob, dataset, action.amount);
       set({ blob: res.blob, lastMessage: res.message });
@@ -602,64 +806,59 @@ export const useTrip = create<TripStore>((set, get) => ({
       }
       case "cheaper_hotel": {
         if (working.lockedComponentIds.includes(working.hotels[0]?.id)) {
-          reply = "Your hotel is locked. Unlock it and I'll find something cheaper.";
+          reply = "Your hotel is locked. Unlock it to look for cheaper stays.";
           break;
         }
         const current = working.hotels[0];
         const cheaper = [...dataset.hotels]
-          .filter((h) => h.id !== current?.id && (!current || h.pricePerNight < current.pricePerNight) && h.cleanliness >= 7)
-          .sort((a, b) => b.cleanliness - a.cleanliness)[0];
-        if (cheaper && current) {
+          .filter((h) => h.id !== current?.id && h.pricePerNight < (current?.pricePerNight ?? Infinity))
+          .sort((a, b) => a.pricePerNight - b.pricePerNight)[0];
+        if (cheaper) {
           working.hotels = [cheaper, ...working.hotels.slice(1)];
-          deltas.push(`Hotel → ${cheaper.name}`, `Saved ${money(current.pricePerNight - cheaper.pricePerNight)}/night`);
-          reply = `Moved you to ${cheaper.name} — cleaner-than-average and easier on the wallet.`;
+          deltas.push(`Hotel → ${cheaper.name} (−₹${((current?.pricePerNight ?? cheaper.pricePerNight) - cheaper.pricePerNight).toLocaleString("en-IN")}/night)`);
+          reply = `Switched you to ${cheaper.name} to save on accommodation.`;
         } else {
-          reply = "Your current stay is already among the best-value options.";
+          reply = "You're already on the most economical stay shortlisted.";
         }
         break;
       }
       case "swap_hotel_named": {
-        const match = dataset.hotels.find(
-          (h) => h.name.toLowerCase().includes(action.query) || action.query.includes(h.name.toLowerCase().split(" ")[0])
-        );
-        if (match) {
-          working.hotels = [match, ...working.hotels.slice(1)];
-          deltas.push(`Hotel → ${match.name}`, `${match.cleanliness}/10 clean · ${money(match.pricePerNight)}/night`);
-          reply = `Booked you into ${match.name}.`;
+        const hit = dataset.hotels.find((h) => h.name.toLowerCase().includes(action.query.toLowerCase()));
+        if (hit) {
+          working.hotels = [hit, ...working.hotels.slice(1)];
+          deltas.push(`Hotel → ${hit.name}`);
+          reply = `Switched your stay to ${hit.name}.`;
         } else {
-          reply = `I couldn't find a stay matching "${action.query}". Try the Stays tab to compare.`;
+          reply = `Couldn't find a hotel matching "${action.query}".`;
         }
         break;
       }
       case "lock_hotel": {
-        const id = working.hotels[0]?.id;
-        if (id && !working.lockedComponentIds.includes(id)) {
-          working.lockedComponentIds = [...working.lockedComponentIds, id];
-          reply = `Locked ${working.hotels[0].name}. I'll optimize everything else around it.`;
-        } else {
-          reply = "Your hotel is already locked.";
+        if (working.hotels[0]) {
+          working.lockedComponentIds = Array.from(new Set([...working.lockedComponentIds, working.hotels[0].id]));
+          deltas.push(`Locked ${working.hotels[0].name}`);
+          reply = `Locked ${working.hotels[0].name} so automated optimizations won't touch it.`;
         }
         break;
       }
       case "set_duration": {
-        const days = Math.max(2, Math.min(21, action.days));
-        working.durationDays = days;
-        deltas.push(`Trip length → ${days} days`, "Hotel nights, transport & itinerary recalculated");
-        reply = `Set your trip to ${days} days.`;
+        working.durationDays = Math.max(1, Math.min(45, action.days));
+        deltas.push(`Trip length → ${working.durationDays} days`);
+        reply = `Updated trip duration to ${working.durationDays} days.`;
         break;
       }
       case "add_days": {
-        const days = Math.max(2, Math.min(21, working.durationDays + action.delta));
+        const days = Math.max(1, Math.min(45, working.durationDays + action.delta));
         working.durationDays = days;
         deltas.push(`Trip length → ${days} days`);
         reply = action.delta > 0 ? `Added ${action.delta} day${action.delta > 1 ? "s" : ""} — now ${days} days.` : `Trimmed to ${days} days.`;
         break;
       }
       case "set_travelers": {
-        const n = Math.max(1, Math.min(12, action.n));
+        const n = Math.max(1, Math.min(20, action.n));
         working.travelers = n;
         working.preferences = { ...working.preferences, travelers: n };
-        deltas.push(`Travellers → ${n}`, "Per-person costs updated");
+        deltas.push(`Travellers → ${n}`, "Total package costs recalculated");
         reply = `Updated to ${n} travellers.`;
         break;
       }
@@ -698,7 +897,6 @@ export const useTrip = create<TripStore>((set, get) => ({
       case "preference":
       case "unknown":
       default: {
-        // fold into steering signals so it still influences ranking
         const signals = parseComment(text, "trip");
         const mood = applyMoodDelta(working.mood, moodDeltaFromComment(text));
         const allSignals = [...working.signals, ...signals];
@@ -707,7 +905,7 @@ export const useTrip = create<TripStore>((set, get) => ({
         working.preferences = derivePreferences(allSignals, working.preferences);
         reply =
           action.kind === "unknown"
-            ? "I've noted that. I can change your hotel, budget, days, travellers, pace, remove a place, or answer questions about the trip — just ask."
+            ? "I've noted that preference and will adjust your plan accordingly."
             : signals[0]?.interpretation ?? "Noted — I'll keep that in mind.";
         break;
       }
@@ -729,6 +927,119 @@ export const useTrip = create<TripStore>((set, get) => ({
       deltas,
       costBefore: before,
       costAfter: after,
+    });
+  },
+
+  setDayFocus: (dayNum, dayType) => {
+    const { blob } = get();
+    const dest = blob.destinationName || "Destination";
+    const { title, stops } = generateDayStopsForType(dest, dayType);
+    const itinerary = blob.itinerary.map((d) => {
+      if (d.day !== dayNum) return d;
+      return {
+        ...d,
+        title,
+        dayType,
+        isRestDay: dayType !== "sightseeing",
+        stops,
+      };
+    });
+    set({
+      blob: {
+        ...blob,
+        itinerary,
+        updatedAt: now(),
+      },
+    });
+  },
+
+  addCustomStop: (dayNum, stop) => {
+    const { blob } = get();
+    const itinerary = blob.itinerary.map((d) => {
+      if (d.day !== dayNum) return d;
+      return {
+        ...d,
+        stops: [...d.stops, stop],
+      };
+    });
+    set({
+      blob: {
+        ...blob,
+        itinerary,
+        updatedAt: now(),
+      },
+    });
+  },
+
+  replaceDayStops: (dayNum, stops, dayTitle) => {
+    const { blob } = get();
+    const itinerary = blob.itinerary.map((d) => {
+      if (d.day !== dayNum) return d;
+      return {
+        ...d,
+        title: dayTitle || d.title,
+        stops,
+        isRestDay: stops.every((s) => s.kind === "rest" || s.kind === "meal"),
+      };
+    });
+    set({
+      blob: {
+        ...blob,
+        itinerary,
+        updatedAt: now(),
+      },
+    });
+  },
+
+  removeStopFromDay: (dayNum, stopIndex) => {
+    const { blob } = get();
+    const itinerary = blob.itinerary.map((d) => {
+      if (d.day !== dayNum) return d;
+      return {
+        ...d,
+        stops: d.stops.filter((_, idx) => idx !== stopIndex),
+      };
+    });
+    set({
+      blob: {
+        ...blob,
+        itinerary,
+        updatedAt: now(),
+      },
+    });
+  },
+
+  removeStopByLabel: (dayNum, query) => {
+    const { blob } = get();
+    const q = query.toLowerCase();
+    const itinerary = blob.itinerary.map((d) => {
+      if (d.day !== dayNum) return d;
+      return {
+        ...d,
+        stops: d.stops.filter((s) => !s.label.toLowerCase().includes(q)),
+      };
+    });
+    set({
+      blob: {
+        ...blob,
+        itinerary,
+        updatedAt: now(),
+      },
+    });
+  },
+
+  updateDayTitle: (dayNum, title) => {
+    const { blob } = get();
+    const itinerary = blob.itinerary.map((d) => {
+      if (d.day !== dayNum) return d;
+      return { ...d, title };
+    });
+    set({
+      blob: {
+        ...blob,
+        itinerary,
+        updatedAt: now(),
+      },
     });
   },
 
@@ -777,15 +1088,39 @@ function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Best-effort origin extraction from the dream, e.g. "from Mumbai". */
 function extractOrigin(dream: string): string {
-  const m = dream.match(/\bfrom\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)/);
+  const m = dream.match(/\b(?:from|flying out of|departing from|leaving from)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)/i);
   if (m) {
     const cand = m[1].trim();
-    // avoid capturing "from the mountains" etc.
-    if (!/^(the|a|an|my|our|here|home)$/i.test(cand)) return cand;
+    if (!/^(the|a|an|my|our|here|home|there|scratch)$/i.test(cand)) return cand;
   }
   return "";
+}
+
+function extractDuration(dream: string): number | undefined {
+  const m = dream.match(/\b(\d+)\s*(?:-| )?\s*days?\b/i) ||
+            dream.match(/\b(\d+)\s*(?:-| )?\s*weeks?\b/i);
+  if (m) {
+    const val = parseInt(m[1], 10);
+    if (/week/i.test(m[0])) return val * 7;
+    return val;
+  }
+  if (/\ba week\b/i.test(dream) || /\bone week\b/i.test(dream)) return 7;
+  if (/\btwo weeks\b/i.test(dream) || /\b2 weeks\b/i.test(dream)) return 14;
+  if (/\bweekend\b/i.test(dream)) return 3;
+  return undefined;
+}
+
+function extractTravelers(dream: string): number | undefined {
+  const m = dream.match(/\b(?:for|with)\s+(\d+)\s*(?:people|persons?|travellers?|travelers?|adults?|of us|pax)?\b/i) ||
+            dream.match(/\b(\d+)\s*(?:people|persons?|travellers?|travelers?|adults?|of us|pax)\b/i);
+  if (m) {
+    const val = parseInt(m[1], 10);
+    if (val >= 1 && val <= 20) return val;
+  }
+  if (/\bsolo\b/i.test(dream) || /\bby myself\b/i.test(dream) || /\bjust me\b/i.test(dream)) return 1;
+  if (/\bcouple\b/i.test(dream) || /\bwith my partner\b/i.test(dream) || /\bwith my wife\b/i.test(dream) || /\bwith my husband\b/i.test(dream)) return 2;
+  return undefined;
 }
 
 const STAGE_RANK: Record<Stage, number> = {
@@ -810,19 +1145,16 @@ function rankHotels(blob: TripBlob, dataset: DestinationDataset): HotelOption[] 
 
   function score(h: HotelOption): number {
     let s = 0;
-    s += h.cleanliness * (prefClean ? 3 : 1.4);
-    s += h.bathroomScore * (prefBath ? 3.4 : 1.2);
-    s += h.confidence * 4;
+    s += h.cleanliness * (prefClean ? 3.5 : 1.5);
+    s += h.bathroomScore * (prefBath ? 3.5 : 1.5);
+    s += (h.confidence ?? 0.8) * 4;
     if (needElevator) s += h.hasElevator ? 6 : -6;
-    // price alignment
-    if (wantCheap) s += (4000 - h.pricePerNight) / 400;
-    else if (wantPremium) s += h.pricePerNight / 800;
-    else s += (3200 - Math.abs(3000 - h.pricePerNight)) / 500;
+    if (wantPremium) s += (h.pricePerNight > 20000 ? 5 : 0);
+    if (wantCheap) s += (h.pricePerNight < 15000 ? 5 : -3);
     return s;
   }
 }
 
-// Investigation status lines — human-readable, per agent.
 function investigationScript(blob: TripBlob, dataset: DestinationDataset) {
   const nHotels = dataset.hotels.length + 28;
   const nReviews = Object.values(dataset.reviews).reduce((s, r) => s + r.count, 0);

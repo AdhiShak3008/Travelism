@@ -67,6 +67,9 @@ html,
 body {
   padding: 0;
   margin: 0;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
   background: hsl(var(--paper));
   color: hsl(var(--ink));
   -webkit-font-smoothing: antialiased;
@@ -127,6 +130,13 @@ body > * {
     background: hsl(var(--paper-2));
     border: 1px solid hsl(var(--line));
   }
+  .glass-panel {
+    background: hsl(var(--card) / 0.82);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid hsl(var(--line) / 0.8);
+    box-shadow: var(--shadow-card);
+  }
   .chip {
     @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium;
     border: 1px solid hsl(var(--line-strong));
@@ -157,6 +167,9 @@ body > * {
   }
   .btn-ghost:hover {
     background: hsl(var(--paper-2));
+  }
+  .external-link {
+    @apply inline-flex items-center gap-1 text-xs text-brand font-bold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 rounded transition;
   }
   .label-eyebrow {
     @apply text-[11px] font-semibold uppercase tracking-[0.28em];
@@ -200,3 +213,4 @@ body > * {
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+

@@ -24,7 +24,7 @@ export function VideoRow({ videos, title = "See it for yourself" }: { videos: Vi
         <h3 className="text-sm font-semibold text-ink">{title}</h3>
         <span className="text-xs text-ink-faint">· {videos.length} clips</span>
       </div>
-      <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
         {videos.map((v) => (
           <motion.a
             key={v.id}
@@ -33,14 +33,14 @@ export function VideoRow({ videos, title = "See it for yourself" }: { videos: Vi
             rel="noreferrer"
             title="Opens on YouTube"
             whileHover={{ y: -3 }}
-            className="group w-64 shrink-0 overflow-hidden rounded-xl border border-line bg-card"
+            className="group w-full overflow-hidden rounded-xl border border-line bg-card"
           >
             <div className="relative aspect-video overflow-hidden">
               <Image
                 src={v.thumbnail}
                 alt={v.title}
                 fill
-                sizes="256px"
+                sizes="(max-width: 768px) 100vw, 320px"
                 className="object-cover transition duration-500 group-hover:scale-105"
                 unoptimized
               />
@@ -50,9 +50,11 @@ export function VideoRow({ videos, title = "See it for yourself" }: { videos: Vi
                   {v.duration}
                 </span>
               )}
-              <span className="stamp absolute left-2 top-2 !bg-white/85 backdrop-blur">{KIND_LABEL[v.kind]}</span>
+              <span className="inline-flex items-center gap-1 rounded-md border border-white/30 bg-black/65 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-md absolute left-2 top-2 shadow-sm">
+                {KIND_LABEL[v.kind]}
+              </span>
               <span className="absolute inset-0 grid place-items-center opacity-0 transition group-hover:opacity-100">
-                <span className="grid h-11 w-11 place-items-center rounded-full bg-white/90 text-ink">▶</span>
+                <span className="grid h-11 w-11 place-items-center rounded-full bg-black/70 border border-white/40 text-white shadow-lg">▶</span>
               </span>
             </div>
             <div className="p-3">

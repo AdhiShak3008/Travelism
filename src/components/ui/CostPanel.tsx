@@ -42,18 +42,18 @@ export function CostPanel({ compact = false }: { compact?: boolean }) {
       </div>
 
       {!compact && (
-        <div className="mt-4 space-y-1.5 border-t border-dashed border-line-strong pt-4">
+        <div className="mt-4 space-y-2 border-t border-dashed border-line-strong pt-4">
           {costs.map((c) => {
             const s = c.sourceId ? resolveSource(c.sourceId) : undefined;
             return (
-              <div key={c.id} className="flex items-center justify-between text-sm">
-                <div className="min-w-0">
-                  <span className="text-ink">{c.label}</span>
-                  {s && <span className="ml-2 text-[11px] text-ink-faint">{s.label} · {timeAgo(c.checkedAt)}</span>}
+              <div key={c.id} className="flex items-start justify-between gap-2 text-xs sm:text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="text-ink font-medium leading-snug break-words">{c.label}</div>
+                  {s && <div className="text-[10px] text-ink-faint mt-0.5">{s.label} · {timeAgo(c.checkedAt)}</div>}
                 </div>
-                <div className="flex items-center gap-2 whitespace-nowrap">
-                  <span className={cx("text-[10px] uppercase", STATUS_TONE[c.status])}>{c.status}</span>
-                  <span className="font-semibold tabular-nums text-ink">{inr(c.amount)}</span>
+                <div className="flex items-center gap-1.5 shrink-0 whitespace-nowrap pt-0.5">
+                  <span className={cx("text-[9px] sm:text-[10px] uppercase font-bold", STATUS_TONE[c.status])}>{c.status}</span>
+                  <span className="font-semibold tabular-nums text-ink text-xs sm:text-sm">{inr(c.amount)}</span>
                 </div>
               </div>
             );

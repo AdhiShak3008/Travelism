@@ -7,21 +7,20 @@ import { useTrip, stageRank } from "@/store/tripStore";
 const STEPS: { id: Stage; label: string }[] = [
   { id: "dream", label: "Dream" },
   { id: "reveal", label: "Discover" },
-  { id: "select", label: "Select" },
-  { id: "shape", label: "Shape" },
-  { id: "mood", label: "Mood" },
-  { id: "investigate", label: "Investigate" },
+  { id: "shape", label: "Schedule" },
+  { id: "mood", label: "Vibe" },
+  { id: "investigate", label: "Swarm AI" },
   { id: "package", label: "Package" },
   { id: "checkout", label: "Book" },
-  { id: "trip", label: "Trip" },
+  { id: "trip", label: "Live Trip" },
 ];
 
 function idx(stage: Stage): number {
   const map: Record<Stage, number> = {
-    dream: 0, reveal: 1, select: 2, shape: 3, mood: 4,
-    investigate: 5, package: 6, refine: 6, cost: 6, checkout: 7, trip: 8,
+    dream: 0, reveal: 1, select: 1, shape: 2, mood: 3,
+    investigate: 4, package: 5, refine: 5, cost: 5, checkout: 6, trip: 7,
   };
-  return map[stage];
+  return map[stage] ?? 0;
 }
 
 export function StageProgress({ stage }: { stage: Stage }) {
@@ -32,41 +31,43 @@ export function StageProgress({ stage }: { stage: Stage }) {
   const maxRank = stageRank(maxReached);
 
   return (
-    <div className="no-scrollbar flex items-center gap-1 overflow-x-auto">
+    <div className="flex flex-wrap items-center justify-center gap-1 rounded-2xl sm:rounded-full border border-line bg-card/70 p-1 backdrop-blur-md">
       {STEPS.map((s, i) => {
         const done = i < active;
         const now = i === active;
-        // a step is reachable if it's at or before the furthest stage reached
         const reachable = !investigating && stageRank(s.id) <= maxRank;
         const Tag = reachable ? "button" : "div";
         return (
-          <div key={s.id} className="flex items-center gap-1">
-            <Tag
-              onClick={reachable ? () => goToStage(s.id) : undefined}
+          <Tag
+            key={s.id}
+            onClick={reachable ? () => goToStage(s.id) : undefined}
+            className={cx(
+              "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+              now
+                ? "bg-brand text-white shadow-sm shadow-brand/30"
+                : done
+                ? "text-ink-soft hover:text-ink hover:bg-paper-2"
+                : "text-ink-faint/50",
+              reachable && !now && "cursor-pointer hover:bg-paper-2"
+            )}
+          >
+            <span
               className={cx(
-                "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition",
-                now && "bg-brand/12 text-brand",
-                done && "text-ink-soft",
-                !now && !done && "text-ink-faint/50",
-                reachable && !now && "hover:bg-paper-2 hover:text-ink cursor-pointer"
+                "grid h-4 w-4 place-items-center rounded-full text-[9px] font-extrabold",
+                now
+                  ? "bg-white/25 text-white"
+                  : done
+                  ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                  : "bg-paper-3 text-ink-faint"
               )}
             >
-              <span
-                className={cx(
-                  "grid h-4 w-4 place-items-center rounded-full text-[9px]",
-                  now && "bg-brand text-paper",
-                  done && "bg-line-strong text-ink",
-                  !now && !done && "border border-line-strong"
-                )}
-              >
-                {done ? "✓" : i + 1}
-              </span>
-              <span className="whitespace-nowrap">{s.label}</span>
-            </Tag>
-            {i < STEPS.length - 1 && <span className="text-ink-faint/30">·</span>}
-          </div>
+              {done ? "✓" : i + 1}
+            </span>
+            <span className="whitespace-nowrap">{s.label}</span>
+          </Tag>
         );
       })}
     </div>
   );
 }
+

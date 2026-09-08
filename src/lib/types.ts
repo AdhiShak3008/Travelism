@@ -27,6 +27,7 @@ export type AgentId =
   | "packrat"
   | "penny_pincher"
   | "cross_examiner"
+  | "cartographer"
   | "bean_counter";
 
 export type AgentPhase = "idle" | "queued" | "working" | "done" | "skipped";
@@ -239,12 +240,15 @@ export interface FlightOption {
   onTime?: number; // 0-100 on-time %
 }
 
+export type StayCategory = "hotel" | "resort" | "boutique" | "homestay" | "campsite" | "wild_camping" | "refugio" | "self_supported";
+
 export interface HotelOption {
   id: string;
   name: string;
   location: string;
   room: string;
   pricePerNight: number;
+  category?: StayCategory;
   images: MediaImage[];
   videoIds: string[];
   cleanliness: number; // 0-10
@@ -351,6 +355,9 @@ export interface ItineraryDay {
   day: number;
   title: string;
   baseLocation: string;
+  dayType?: "sightseeing" | "staycation" | "wellness" | "culinary" | "beach" | "custom";
+  isRestDay?: boolean;
+  customNotes?: string;
   stops: ItineraryStop[];
 }
 
@@ -413,10 +420,16 @@ export type MoodKey =
 
 export type Mood = Record<MoodKey, number>; // 0-10
 
+export type StayMode = "hotels" | "wild_camping" | "campsites_refugios" | "homestays" | "none";
+export type StayStrategy = "single_basecamp" | "multi_stop" | "self_supported" | "none";
+
 export interface Preferences {
   budgetTotal?: number;
   budgetTier: "economical" | "balanced" | "premium";
   pace: "comfortable" | "balanced" | "fast";
+  stayMode?: StayMode;
+  stayStrategy?: StayStrategy;
+  isSelfSupported?: boolean;
   minimizeHotelChanges: boolean;
   hotelChangeSavingsThreshold?: number;
   avoidEarlyFlights: boolean;
