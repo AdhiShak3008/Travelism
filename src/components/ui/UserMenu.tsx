@@ -2,10 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/store/authStore";
 
 export function UserMenu() {
+  const router = useRouter();
   const { user, isAuthenticated, openAuthModal, openSavedTrips, openPreferences, logout } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -22,13 +25,15 @@ export function UserMenu() {
 
   if (!isAuthenticated || !user) {
     return (
-      <button
-        onClick={openAuthModal}
-        className="chip !py-1.5 !px-3 font-semibold !bg-brand/10 !text-brand border-brand/30 hover:!bg-brand/20 transition flex items-center gap-1.5 shadow-sm"
+      <Link
+        href="/login"
+        onClick={() => openAuthModal()}
+        className="chip !py-1.5 !px-3 font-semibold !bg-brand/10 !text-brand border-brand/30 hover:!bg-brand/20 active:scale-95 transition flex items-center gap-1.5 shadow-sm shrink-0"
+        title="Open Login & Infinite Global Spot Showcase"
       >
         <span>⚡</span>
         <span>Sign In / Demo</span>
-      </button>
+      </Link>
     );
   }
 
@@ -36,7 +41,7 @@ export function UserMenu() {
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 rounded-full border border-line bg-paper-2 p-1 pr-3 hover:border-brand/40 transition shadow-sm"
+        className="flex items-center gap-2 rounded-full border border-line bg-paper-2 p-1 pr-3 hover:border-brand/40 transition shadow-sm shrink-0"
       >
         <div className="relative h-7 w-7 overflow-hidden rounded-full border border-brand">
           <Image src={user.avatar} alt={user.name} fill sizes="28px" className="object-cover" unoptimized />
@@ -114,6 +119,7 @@ export function UserMenu() {
                   onClick={() => {
                     setIsOpen(false);
                     logout();
+                    router.push("/login");
                   }}
                   className="w-full rounded-xl px-3 py-2 text-left text-xs font-semibold text-bad hover:bg-bad/10 flex items-center gap-2 transition"
                 >
