@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
-import { inr, cx } from "@/lib/format";
+import { inr, cx, formatDateRange } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 import { HotelCard } from "@/components/ui/HotelCard";
 import { FlightCard, TransportCard, PermitCard, FoodCard, ConflictBanner } from "@/components/ui/ComponentCards";
@@ -67,8 +67,8 @@ export function MobilePackageStage() {
 
   const handleCopySummary = () => {
     const summary = `🌴 TRAVELISM CUSTOM ITINERARY: ${blob.destinationName.toUpperCase()}
-Duration: ${blob.durationDays} Days (${Math.max(1, blob.durationDays - 1)} Nights) · ${blob.travelers} Travelers
-From: ${blob.origin || "Origin City"}
+Calendar Dates: ${formatDateRange(blob.dates?.start, blob.durationDays)} (${blob.durationDays} Days / ${Math.max(1, blob.durationDays - 1)} Nights)
+Party: ${blob.travelers} Traveler${blob.travelers > 1 ? "s" : ""} · Origin: ${blob.origin || "Origin City"} · ${blob.preferences.pace} Pace
 Primary Stay: ${primaryHotel?.name || "Self-Supported / Wild Camping"} (${inr(primaryHotel?.pricePerNight || 0)}/night)
 Flight: ${blob.flight ? `${blob.flight.airline} (${blob.flight.depart} - ${blob.flight.arrive})` : "Direct route"}
 Booked Experiences: ${blob.experiences.map((e) => e.name).join(", ") || "None"}
@@ -98,9 +98,11 @@ Generated with Travelism 2.0`;
               ))}
             </div>
             <h1 className="display text-2xl font-bold text-ink">{blob.destinationName}</h1>
-            <p className="text-xs text-ink-soft mt-0.5">
-              {blob.durationDays} Days · {blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""} · {blob.origin || "Origin"} · {blob.preferences.pace} Pace
-            </p>
+            <div className="text-xs text-ink-soft mt-1 flex flex-wrap items-center gap-1.5 font-medium">
+              <span className="font-bold text-brand">🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+              <span className="text-ink-faint">·</span>
+              <span>{blob.durationDays}d · {blob.travelers} pax · {blob.preferences.pace}</span>
+            </div>
           </div>
 
           <div className="text-right">

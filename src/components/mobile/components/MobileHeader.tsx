@@ -1,6 +1,7 @@
 "use client";
 
 import { useTrip } from "@/store/tripStore";
+import { useAuth } from "@/store/authStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
 import type { Stage } from "@/lib/types";
@@ -26,6 +27,7 @@ export function MobileHeader() {
   const destinationName = useTrip((s) => s.blob.destinationName);
   const reset = useTrip((s) => s.reset);
   const setStage = useTrip((s) => s.setStage);
+  const openPreferences = useAuth((s) => s.openPreferences);
 
   const idx = STAGE_ORDER.indexOf(stage);
   const prevStage = idx > 0 ? STAGE_ORDER[idx - 1] : null;
@@ -47,12 +49,12 @@ export function MobileHeader() {
   };
 
   return (
-    <header className="sticky top-0 z-40 flex items-center justify-between border-b border-line bg-paper/95 px-4 py-2.5 backdrop-blur-xl transition-colors">
-      <div className="flex items-center gap-2.5 min-w-0">
+    <header className="sticky top-0 z-40 flex items-center justify-between border-b border-line bg-paper/95 px-3 py-2.5 backdrop-blur-xl transition-colors">
+      <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
         {prevStage && stage !== "trip" ? (
           <button
             onClick={handleBack}
-            className="grid h-8 w-8 place-items-center rounded-full border border-line bg-paper-2 text-ink active:scale-95 transition"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-paper-2 text-ink active:scale-95 transition"
             aria-label="Go back"
           >
             ←
@@ -67,8 +69,8 @@ export function MobileHeader() {
         )}
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="display text-base font-bold text-ink truncate">
+          <div className="flex items-center gap-1">
+            <span className="display text-sm font-bold text-ink truncate">
               {destinationName || "Travelism"}
             </span>
           </div>
@@ -78,7 +80,15 @@ export function MobileHeader() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={openPreferences}
+          className="flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2.5 py-1 text-[11px] font-bold text-brand shadow-2xs active:scale-95 transition"
+          title="Travel DNA & Preferences"
+        >
+          <span>🧬</span>
+          <span className="hidden xs:inline">DNA</span>
+        </button>
         <UserMenu />
         <ThemeToggle />
       </div>

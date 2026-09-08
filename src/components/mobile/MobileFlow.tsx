@@ -4,8 +4,9 @@ import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { LightboxProvider } from "@/components/ui/Lightbox";
-import { AuthModal } from "@/components/ui/AuthModal";
+import { AuthPage } from "@/components/ui/AuthPage";
 import { SavedTripsDrawer } from "@/components/ui/SavedTripsDrawer";
+import { PreferencesPage } from "@/components/ui/PreferencesPage";
 import { MobileHeader } from "./components/MobileHeader";
 import { MobileModifySheet } from "./components/MobileModifySheet";
 
@@ -31,9 +32,10 @@ export function MobileFlow() {
   return (
     <LightboxProvider>
       <div className="min-h-screen w-full min-w-0 bg-paper overflow-x-hidden">
-        {/* Modals & Drawers */}
-        <AuthModal />
+        {/* Modals & Fullscreen Overlays */}
+        <AuthPage />
         <SavedTripsDrawer />
+        <PreferencesPage />
 
         {/* Mobile Top App Bar */}
         {showHeader && <MobileHeader />}

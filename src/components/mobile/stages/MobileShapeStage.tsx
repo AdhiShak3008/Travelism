@@ -5,7 +5,7 @@ import { useTrip } from "@/store/tripStore";
 import { estimateDaysForPlaces, recommendStayStrategy } from "@/lib/engine";
 import { SteeringBox } from "@/components/ui/SteeringBox";
 import type { Preferences, StayMode } from "@/lib/types";
-import { cx } from "@/lib/format";
+import { cx, getDefaultStartDate, addDays, formatDateRange } from "@/lib/format";
 
 const PACES: { key: Preferences["pace"]; label: string; desc: string; icon: string }[] = [
   { key: "comfortable", label: "Slow & Relaxed", desc: "Plenty of downtime, relaxed mornings, scenic meals.", icon: "☕" },
@@ -39,6 +39,13 @@ const TRAVELER_PRESETS = [
   { label: "Group (6)", count: 6 },
 ];
 
+const DATE_PRESETS = [
+  { label: "In 2 Weeks", get: () => getDefaultStartDate() },
+  { label: "Next Month", get: () => addDays(new Date().toISOString().split("T")[0], 30) },
+  { label: "In 2 Months", get: () => addDays(new Date().toISOString().split("T")[0], 60) },
+  { label: "Holiday Season", get: () => `${new Date().getFullYear()}-12-23` },
+];
+
 const POPULAR_ORIGINS = [
   "Hyderabad", "Mumbai", "Delhi", "Bengaluru", "Chennai", "Kolkata", "Dubai", "London", "New York"
 ];
@@ -47,6 +54,7 @@ export function MobileShapeStage() {
   const dataset = useTrip((s) => s.dataset);
   const blob = useTrip((s) => s.blob);
   const setDuration = useTrip((s) => s.setDuration);
+  const setDates = useTrip((s) => s.setDates);
   const setTravelers = useTrip((s) => s.setTravelers);
   const setPace = useTrip((s) => s.setPace);
   const setStayMode = useTrip((s) => s.setStayMode);
@@ -134,7 +142,55 @@ export function MobileShapeStage() {
         </div>
       </div>
 
-      {/* 2. ACCOMMODATION & STAY STYLE SELECTOR (Matches PC Experience) */}
+      {/* 2. CALENDAR DATES & SEASON (Mobile) */}
+      <div className="card p-4 shadow-sm border-line space-y-3">
+        <div>
+          <div className="label-eyebrow text-[10px]">Trip Departure & Return Dates</div>
+          <div className="display text-lg font-bold text-ink flex items-center gap-1.5 mt-0.5">
+            <span>🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+          </div>
+          <p className="text-[11px] text-ink-soft mt-0.5">
+            Locks real flight routes and hotel check-in/out schedules.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            min={new Date().toISOString().split("T")[0]}
+            value={blob.dates?.start || getDefaultStartDate()}
+            onChange={(e) => setDates({ start: e.target.value, flexible: blob.dates?.flexible ?? false })}
+            className="w-full rounded-xl border border-line bg-paper px-3 py-2 text-xs font-bold text-ink outline-none focus:border-brand shadow-inner cursor-pointer"
+          />
+          <button
+            onClick={() => setDates({ start: blob.dates?.start, flexible: !blob.dates?.flexible })}
+            className={cx(
+              "shrink-0 rounded-xl px-3 py-2 text-xs font-bold transition shadow-2xs",
+              blob.dates?.flexible
+                ? "bg-brand text-white"
+                : "border border-line bg-paper-2 text-ink-soft"
+            )}
+          >
+            {blob.dates?.flexible ? "± Flexible" : "Exact"}
+          </button>
+        </div>
+
+        {/* Quick Date Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-line/60">
+          <span className="text-[10px] text-ink-faint shrink-0">Quick:</span>
+          {DATE_PRESETS.map((preset, idx) => (
+            <button
+              key={idx}
+              onClick={() => setDates({ start: preset.get(), flexible: false })}
+              className="shrink-0 rounded-full border border-line bg-paper-2 px-2.5 py-0.5 text-[11px] font-medium text-ink-soft active:scale-95"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 3. ACCOMMODATION & STAY STYLE SELECTOR (Matches PC Experience) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="display text-base font-bold text-ink">Accommodation & Stay Style</h3>

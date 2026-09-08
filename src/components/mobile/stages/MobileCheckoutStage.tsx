@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTrip } from "@/store/tripStore";
-import { inr } from "@/lib/format";
+import { inr, formatDateRange } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 
 export function MobileCheckoutStage() {
@@ -27,8 +27,10 @@ export function MobileCheckoutStage() {
       <div>
         <span className="label-eyebrow">Final Step</span>
         <h1 className="display text-2xl font-bold text-ink">Confirm & Reserve Trip</h1>
-        <p className="text-xs text-ink-soft mt-1">
-          {blob.durationDays} Days · {blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""} · {blob.destinationName}
+        <p className="text-xs text-ink-soft mt-1 flex flex-wrap items-center gap-1.5 font-medium">
+          <span className="font-bold text-brand">🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+          <span className="text-ink-faint">·</span>
+          <span>{blob.durationDays}d · {blob.travelers} pax · {blob.destinationName}</span>
         </p>
       </div>
 

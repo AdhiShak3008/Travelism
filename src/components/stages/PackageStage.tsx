@@ -4,7 +4,7 @@ import { useState } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
-import { inr, cx } from "@/lib/format";
+import { inr, cx, formatDateRange } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 import { HotelCard } from "@/components/ui/HotelCard";
 import { FlightCard, TransportCard, PermitCard, FoodCard, ConflictBanner } from "@/components/ui/ComponentCards";
@@ -69,8 +69,8 @@ export function PackageStage() {
 
   const handleCopySummary = () => {
     const summary = `🌴 TRAVELISM CUSTOM ITINERARY: ${blob.destinationName.toUpperCase()}
-Duration: ${blob.durationDays} Days (${Math.max(1, blob.durationDays - 1)} Nights) · ${blob.travelers} Travelers
-From: ${blob.origin || "Origin City"}
+Calendar Dates: ${formatDateRange(blob.dates?.start, blob.durationDays)} (${blob.durationDays} Days / ${Math.max(1, blob.durationDays - 1)} Nights)
+Party: ${blob.travelers} Traveler${blob.travelers > 1 ? "s" : ""} · Origin: ${blob.origin || "Origin City"} · ${blob.preferences.pace} Pace
 Primary Stay: ${primaryHotel?.name || "Selected Resort"} (${inr(primaryHotel?.pricePerNight || 0)}/night)
 Flight: ${blob.flight ? `${blob.flight.airline} (${blob.flight.depart} - ${blob.flight.arrive})` : "Direct route"}
 Booked Experiences: ${blob.experiences.map((e) => e.name).join(", ") || "None"}
@@ -103,9 +103,17 @@ Generated with Travelism 2.0`;
               <h1 className="display text-4xl font-bold tracking-tight text-ink sm:text-5xl">
                 {blob.destinationName}
               </h1>
-              <p className="mt-2 text-ink-soft text-base font-medium">
-                {blob.durationDays} Days ({Math.max(1, blob.durationDays - 1)} Nights) · {blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""} · From {blob.origin || "Your City"} · {blob.preferences.pace} Pace
-              </p>
+              <div className="mt-2 text-ink-soft text-base font-medium flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <span className="font-bold text-ink">🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+                <span className="text-ink-faint">·</span>
+                <span>{blob.durationDays} Days ({Math.max(1, blob.durationDays - 1)} Nights)</span>
+                <span className="text-ink-faint">·</span>
+                <span>{blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""}</span>
+                <span className="text-ink-faint">·</span>
+                <span>From {blob.origin || "Your City"}</span>
+                <span className="text-ink-faint">·</span>
+                <span className="capitalize">{blob.preferences.pace} Pace</span>
+              </div>
             </div>
 
             <div className="flex flex-col sm:items-end gap-3">

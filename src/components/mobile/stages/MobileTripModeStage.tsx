@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
-import { inr } from "@/lib/format";
+import { inr, formatDateRange, formatDayDate } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 
 export function MobileTripModeStage() {
@@ -27,9 +27,11 @@ export function MobileTripModeStage() {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live Trip Mode
           </span>
           <h1 className="display text-2xl font-bold text-ink mt-1">{blob.destinationName}</h1>
-          <p className="text-xs text-ink-soft">
-            {blob.durationDays} Days · Ref: #{blob.id.slice(-6).toUpperCase()}
-          </p>
+          <div className="text-xs text-ink-soft mt-0.5 flex flex-wrap items-center gap-1.5 font-medium">
+            <span className="font-bold text-brand">🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+            <span className="text-ink-faint">·</span>
+            <span>Ref: #{blob.id.slice(-6).toUpperCase()}</span>
+          </div>
         </div>
 
         <button
@@ -59,19 +61,23 @@ export function MobileTripModeStage() {
 
       {/* Day Selector Pills */}
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-        {blob.itinerary.map((d) => (
-          <button
-            key={d.day}
-            onClick={() => setActiveDay(d.day)}
-            className={`shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-bold transition shadow-xs ${
-              activeDay === d.day
-                ? "bg-brand text-white"
-                : "border border-line bg-card text-ink-soft hover:text-ink"
-            }`}
-          >
-            Day {d.day}
-          </button>
-        ))}
+        {blob.itinerary.map((d) => {
+          const dayDate = formatDayDate(blob.dates?.start, d.day);
+          return (
+            <button
+              key={d.day}
+              onClick={() => setActiveDay(d.day)}
+              className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-bold transition shadow-xs flex flex-col items-center ${
+                activeDay === d.day
+                  ? "bg-brand text-white"
+                  : "border border-line bg-card text-ink-soft hover:text-ink"
+              }`}
+            >
+              <span>Day {d.day}</span>
+              <span className="text-[9px] font-normal opacity-85">{dayDate}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Active Day Timeline Card */}

@@ -1,6 +1,18 @@
 "use client";
 
 import { create } from "zustand";
+import type { StayMode } from "@/lib/types";
+
+export interface TravelPreferences {
+  currency: "INR" | "USD" | "EUR" | "GBP" | "JPY" | "AED";
+  budgetTier: "economical" | "balanced" | "premium";
+  travelPace: "comfortable" | "balanced" | "fast";
+  stayMode: StayMode;
+  dietary: string[];
+  vibePriorities: string[];
+  flightPreferences: string[];
+  accessibilityNeeds: string[];
+}
 
 export interface UserProfile {
   id: string;
@@ -11,12 +23,7 @@ export interface UserProfile {
   isDemo: boolean;
   memberSince: string;
   savedTrips: SavedTripSummary[];
-  preferences: {
-    currency: "INR" | "USD" | "EUR" | "GBP";
-    travelPace: "comfortable" | "balanced" | "fast";
-    dietary: string[];
-    hotelTier: "luxury" | "boutique" | "budget";
-  };
+  preferences: TravelPreferences;
 }
 
 export interface SavedTripSummary {
@@ -30,6 +37,17 @@ export interface SavedTripSummary {
   hotelName?: string;
   sightsCount: number;
 }
+
+const DEFAULT_PREFERENCES: TravelPreferences = {
+  currency: "INR",
+  budgetTier: "balanced",
+  travelPace: "balanced",
+  stayMode: "hotels",
+  dietary: ["Vegetarian Friendly", "Local Gourmet"],
+  vibePriorities: ["Mountain Views", "Photography & Golden Hour", "Historic Streets", "Local Cuisine"],
+  flightPreferences: ["Avoid early mornings (<8 AM)", "Window Seat"],
+  accessibilityNeeds: [],
+};
 
 const DEMO_USER: UserProfile = {
   id: "usr_demo_vip",
@@ -74,12 +92,7 @@ const DEMO_USER: UserProfile = {
       sightsCount: 11,
     },
   ],
-  preferences: {
-    currency: "INR",
-    travelPace: "balanced",
-    dietary: ["Vegetarian Friendly", "Local Gourmet"],
-    hotelTier: "luxury",
-  },
+  preferences: { ...DEFAULT_PREFERENCES },
 };
 
 interface AuthStore {
@@ -87,17 +100,21 @@ interface AuthStore {
   isAuthenticated: boolean;
   isAuthModalOpen: boolean;
   isSavedTripsOpen: boolean;
+  isPreferencesOpen: boolean;
 
   openAuthModal: () => void;
   closeAuthModal: () => void;
   openSavedTrips: () => void;
   closeSavedTrips: () => void;
+  openPreferences: () => void;
+  closePreferences: () => void;
 
   login: (email: string, name?: string) => void;
   loginAsDemo: () => void;
   logout: () => void;
   saveCurrentTrip: (summary: Omit<SavedTripSummary, "id" | "createdAt">) => void;
   removeSavedTrip: (tripId: string) => void;
+  updatePreferences: (prefs: Partial<TravelPreferences>) => void;
 }
 
 export const useAuth = create<AuthStore>((set, get) => ({
@@ -105,11 +122,14 @@ export const useAuth = create<AuthStore>((set, get) => ({
   isAuthenticated: false,
   isAuthModalOpen: false,
   isSavedTripsOpen: false,
+  isPreferencesOpen: false,
 
   openAuthModal: () => set({ isAuthModalOpen: true }),
   closeAuthModal: () => set({ isAuthModalOpen: false }),
   openSavedTrips: () => set({ isSavedTripsOpen: true }),
   closeSavedTrips: () => set({ isSavedTripsOpen: false }),
+  openPreferences: () => set({ isPreferencesOpen: true }),
+  closePreferences: () => set({ isPreferencesOpen: false }),
 
   login: (email: string, name = "Traveler") => {
     const newUser: UserProfile = {
@@ -121,12 +141,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       isDemo: false,
       memberSince: "Today",
       savedTrips: [],
-      preferences: {
-        currency: "INR",
-        travelPace: "balanced",
-        dietary: [],
-        hotelTier: "boutique",
-      },
+      preferences: { ...DEFAULT_PREFERENCES },
     };
     set({ user: newUser, isAuthenticated: true, isAuthModalOpen: false });
   },
@@ -162,6 +177,20 @@ export const useAuth = create<AuthStore>((set, get) => ({
       user: {
         ...user,
         savedTrips: user.savedTrips.filter((t) => t.id !== tripId),
+      },
+    });
+  },
+
+  updatePreferences: (prefs) => {
+    const { user } = get();
+    if (!user) return;
+    set({
+      user: {
+        ...user,
+        preferences: {
+          ...user.preferences,
+          ...prefs,
+        },
       },
     });
   },

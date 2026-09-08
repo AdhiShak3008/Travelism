@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
-import { inr, cx } from "@/lib/format";
+import { inr, cx, formatDateRange } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 import { JourneyRibbon } from "@/components/ui/JourneyRibbon";
 import { ItineraryView } from "@/components/ui/ItineraryView";
@@ -53,7 +53,9 @@ export function TripModeStage() {
     }, 2800);
   };
 
-  const daysToGo = 12;
+  const departureDate = blob.dates?.start ? new Date(blob.dates.start) : new Date();
+  const diffDays = Math.max(0, Math.ceil((departureDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+  const daysToGo = isNaN(diffDays) ? 14 : diffDays;
   const hotelName = blob.hotels[0]?.name || "Primary Resort";
   const flightName = blob.flight?.airline || "Scheduled Flight";
 
@@ -95,8 +97,14 @@ export function TripModeStage() {
               <h1 className="display text-3xl sm:text-4xl font-semibold tracking-tight text-ink">
                 {blob.destinationName}
               </h1>
-              <p className="text-xs sm:text-sm text-ink-soft mt-1">
-                {blob.durationDays} Days · {blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""} · Ref: #{blob.id.slice(-6).toUpperCase()}
+              <p className="text-xs sm:text-sm text-ink-soft mt-1 flex flex-wrap items-center gap-2">
+                <span className="font-bold text-brand">🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+                <span className="text-ink-faint">·</span>
+                <span>{blob.durationDays} Days</span>
+                <span className="text-ink-faint">·</span>
+                <span>{blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""}</span>
+                <span className="text-ink-faint">·</span>
+                <span>Ref: #{blob.id.slice(-6).toUpperCase()}</span>
               </p>
             </div>
             <div className="text-right">

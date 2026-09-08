@@ -63,6 +63,8 @@ const DEFAULT_PREFS: Preferences = {
   deprioritized: [],
 };
 
+import { getDefaultStartDate } from "@/lib/format";
+
 function emptyBlob(): TripBlob {
   return {
     id: `trip_${Date.now()}`,
@@ -73,7 +75,7 @@ function emptyBlob(): TripBlob {
     dream: "",
     origin: "Hyderabad",
     travelers: 2,
-    dates: { flexible: true },
+    dates: { start: getDefaultStartDate(), flexible: false },
     durationDays: 7,
     mood: { ...DEFAULT_MOOD },
     preferences: { ...DEFAULT_PREFS },
@@ -118,6 +120,7 @@ interface TripStore {
   addCustomExperience: (data: { name: string; category?: Experience["category"]; price?: number; blurb?: string; durationHours?: number }) => void;
   removeCustomExperience: (nameOrId: string) => void;
   setDuration: (days: number) => void;
+  setDates: (dates: { start?: string; end?: string; flexible: boolean }) => void;
   setTravelers: (n: number) => void;
   setOrigin: (city: string) => void;
   refreshFlights: () => Promise<void>;
@@ -398,6 +401,12 @@ export const useTrip = create<TripStore>((set, get) => ({
     const { blob } = get();
     const next = { ...blob, durationDays: Math.max(1, Math.min(45, days)), updatedAt: now() };
     set({ blob: next });
+    if (blob.hotels.length) get().recompute();
+  },
+
+  setDates: (dates) => {
+    const { blob } = get();
+    set({ blob: { ...blob, dates, updatedAt: now() } });
     if (blob.hotels.length) get().recompute();
   },
 

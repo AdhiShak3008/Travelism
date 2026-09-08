@@ -4,7 +4,7 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { costTotals } from "@/lib/engine";
-import { inr, cx } from "@/lib/format";
+import { inr, cx, formatDateRange } from "@/lib/format";
 
 const METHODS = [
   { id: "upi", label: "UPI", glyph: "📱" },
@@ -31,7 +31,13 @@ export function CheckoutStage() {
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
         <div className="stamp mb-3">Ready when you are</div>
         <h1 className="display text-4xl font-semibold tracking-tight text-ink">{blob.destinationName}</h1>
-        <p className="mt-1 text-ink-soft">{blob.durationDays} days · {blob.travelers} traveller{blob.travelers > 1 ? "s" : ""}</p>
+        <p className="mt-1 text-ink-soft flex items-center gap-2">
+          <span className="font-semibold text-brand">🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+          <span className="text-ink-faint">·</span>
+          <span>{blob.durationDays} days</span>
+          <span className="text-ink-faint">·</span>
+          <span>{blob.travelers} traveler{blob.travelers > 1 ? "s" : ""}</span>
+        </p>
       </motion.div>
 
       {/* Receipt */}

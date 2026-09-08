@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ItineraryDay, ItineraryStop } from "@/lib/types";
 import { useTrip } from "@/store/tripStore";
-import { cx } from "@/lib/format";
+import { cx, formatDayDate } from "@/lib/format";
 import { InteractiveMapView } from "./InteractiveMapView";
 
 const KIND_GLYPH: Record<ItineraryStop["kind"], string> = {
@@ -28,6 +28,7 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
   const addCustomStop = useTrip((s) => s.addCustomStop);
   const removeStopFromDay = useTrip((s) => s.removeStopFromDay);
   const destinationName = useTrip((s) => s.blob.destinationName) || "Destination";
+  const blobDates = useTrip((s) => s.blob.dates);
 
   const [activeDayMap, setActiveDayMap] = useState<number | null>(null);
   const [addingStopDay, setAddingStopDay] = useState<number | null>(null);
@@ -58,6 +59,7 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
       {days.map((d, di) => {
         const isMapOpen = activeDayMap === d.day;
         const isAdding = addingStopDay === d.day;
+        const formattedDayDate = formatDayDate(blobDates?.start, d.day);
 
         return (
           <motion.div
@@ -86,6 +88,10 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
                 </span>
                 <div>
                   <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-brand uppercase tracking-wider">
+                      {formattedDayDate}
+                    </span>
+                    <span className="text-ink-faint text-xs">·</span>
                     <h3 className="display text-base sm:text-lg font-bold text-ink">{d.title}</h3>
                     {d.isRestDay && (
                       <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.2 text-[10px] font-bold text-amber-700 dark:text-amber-300">

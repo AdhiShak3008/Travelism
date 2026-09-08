@@ -6,7 +6,7 @@ import { estimateDaysForPlaces, recommendStayStrategy } from "@/lib/engine";
 import { SteeringBox } from "@/components/ui/SteeringBox";
 import { SectionTitle } from "@/components/ui/Primitives";
 import type { Preferences, StayMode } from "@/lib/types";
-import { cx } from "@/lib/format";
+import { cx, getDefaultStartDate, addDays, formatDate, formatDateRange } from "@/lib/format";
 
 const PACES: { key: Preferences["pace"]; label: string; desc: string; icon: string }[] = [
   { key: "comfortable", label: "Slow & Leisurely", desc: "Plenty of downtime, relaxed mornings, scenic meals.", icon: "☕" },
@@ -17,7 +17,7 @@ const PACES: { key: Preferences["pace"]; label: string; desc: string; icon: stri
 const STAY_MODES: { key: StayMode; label: string; desc: string; icon: string; tag?: string }[] = [
   { key: "hotels", label: "Hotels & Boutique Stays", desc: "Curated hotels, resorts, and vetted properties.", icon: "🏨" },
   { key: "wild_camping", label: "Wild Camping & Bivvies", desc: "100% self-supported. River & trail pitches with ₹0 hotel fees.", icon: "⛺", tag: "₹0 Lodging" },
-  { key: "campsites_refugios", label: "Campsites & Alpine Huts", desc: "Designated tent pitches, refugios, and backcountry shelters.", icon: "🏕️" },
+  { key: "campsites_refugios", label: "Campsites & Alpine Huts", desc: "Designated tent pitches, refugios, and shelters.", icon: "🏕️" },
   { key: "homestays", label: "Local Homestays", desc: "Authentic family-run stays and mountain village guesthouses.", icon: "🏡" },
   { key: "none", label: "No Hotel Needed", desc: "Day trip, staying with friends/family, or self-arranged lodging.", icon: "🚫", tag: "Zero Stays" },
 ];
@@ -41,6 +41,14 @@ const TRAVELER_PRESETS = [
   { label: "Friends Group (6)", count: 6 },
 ];
 
+const DATE_PRESETS = [
+  { label: "In 2 Weeks", get: () => getDefaultStartDate() },
+  { label: "Next Month", get: () => addDays(new Date().toISOString().split("T")[0], 30) },
+  { label: "In 2 Months", get: () => addDays(new Date().toISOString().split("T")[0], 60) },
+  { label: "Holiday Season", get: () => `${new Date().getFullYear()}-12-23` },
+  { label: "Spring Getaway", get: () => `${new Date().getFullYear() + 1}-03-15` },
+];
+
 const POPULAR_ORIGINS = [
   "Hyderabad",
   "Mumbai",
@@ -58,6 +66,7 @@ export function ShapeStage() {
   const dataset = useTrip((s) => s.dataset);
   const blob = useTrip((s) => s.blob);
   const setDuration = useTrip((s) => s.setDuration);
+  const setDates = useTrip((s) => s.setDates);
   const setTravelers = useTrip((s) => s.setTravelers);
   const setPace = useTrip((s) => s.setPace);
   const setStayMode = useTrip((s) => s.setStayMode);
@@ -156,6 +165,65 @@ export function ShapeStage() {
             : blob.durationDays < needed
             ? ` In ${blob.durationDays} days it will be a fast-paced trip. You can freely extend the days above anytime.`
             : " Perfectly matched rhythm for your selected sights."}
+        </div>
+      </div>
+
+      {/* Calendar Dates & Season Card */}
+      <div className="card mt-6 p-6 shadow-card">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="label-eyebrow mb-1">Departure & Return Calendar Dates</div>
+            <div className="display text-xl sm:text-2xl font-bold text-ink flex items-center gap-2">
+              <span>🗓️ {formatDateRange(blob.dates?.start, blob.durationDays)}</span>
+            </div>
+            <p className="text-xs text-ink-soft mt-0.5">
+              Exact departure locks flights, daily hotel check-ins, and seasonal daylight schedules.
+            </p>
+          </div>
+
+          {/* Date Picker input */}
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-ink-faint mb-1">
+                Departure Date
+              </label>
+              <input
+                type="date"
+                min={new Date().toISOString().split("T")[0]}
+                value={blob.dates?.start || getDefaultStartDate()}
+                onChange={(e) => setDates({ start: e.target.value, flexible: blob.dates?.flexible ?? false })}
+                className="rounded-xl border border-line bg-paper px-3.5 py-2 text-sm font-bold text-ink outline-none focus:border-brand shadow-inner cursor-pointer"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Date presets & Flexible Toggle */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-line/60">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-ink-faint mr-1">Quick Dates:</span>
+            {DATE_PRESETS.map((preset, idx) => (
+              <button
+                key={idx}
+                onClick={() => setDates({ start: preset.get(), flexible: false })}
+                className="rounded-full border border-line bg-paper-2 px-3 py-1 text-xs font-medium text-ink-soft hover:text-ink hover:bg-paper-3 transition"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => setDates({ start: blob.dates?.start, flexible: !blob.dates?.flexible })}
+            className={cx(
+              "rounded-full px-3.5 py-1 text-xs font-bold transition flex items-center gap-1.5 shadow-2xs",
+              blob.dates?.flexible
+                ? "bg-brand text-white"
+                : "border border-line bg-paper-2 text-ink-soft hover:text-ink"
+            )}
+          >
+            <span>{blob.dates?.flexible ? "✓ Flexible Dates (±3 Days)" : "± Flexible Dates"}</span>
+          </button>
         </div>
       </div>
 

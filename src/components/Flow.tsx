@@ -8,8 +8,10 @@ import { MobileFlow } from "@/components/mobile/MobileFlow";
 import { StageProgress } from "@/components/ui/StageProgress";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
-import { AuthModal } from "@/components/ui/AuthModal";
+import { AuthPage } from "@/components/ui/AuthPage";
 import { SavedTripsDrawer } from "@/components/ui/SavedTripsDrawer";
+import { PreferencesPage } from "@/components/ui/PreferencesPage";
+import { useAuth } from "@/store/authStore";
 import { LightboxProvider } from "@/components/ui/Lightbox";
 import { DreamStage } from "@/components/stages/DreamStage";
 import { RevealStage } from "@/components/stages/RevealStage";
@@ -25,6 +27,7 @@ export function Flow() {
   const stage = useTrip((s) => s.stage);
   const destinationName = useTrip((s) => s.blob.destinationName);
   const reset = useTrip((s) => s.reset);
+  const openPreferences = useAuth((s) => s.openPreferences);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
@@ -39,9 +42,10 @@ export function Flow() {
   return (
     <LightboxProvider>
       <div className="min-h-screen w-full min-w-0 overflow-x-hidden">
-        {/* Modals & Drawers */}
-        <AuthModal />
+        {/* Modals, Drawers & Fullscreen Overlays */}
+        <AuthPage />
         <SavedTripsDrawer />
+        <PreferencesPage />
 
         {showHeader && (
           <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur-xl transition-colors">
@@ -66,6 +70,15 @@ export function Flow() {
                 <div className="hidden md:block">
                   <StageProgress stage={stage} />
                 </div>
+                {/* Dedicated Travel DNA / Preferences button */}
+                <button
+                  onClick={openPreferences}
+                  className="flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 px-3.5 py-1.5 text-xs font-bold text-brand shadow-xs hover:bg-brand/20 active:scale-95 transition"
+                  title="Customize your personal Travel DNA, pace, budget & hotel tastes"
+                >
+                  <span>🧬</span>
+                  <span>Travel DNA</span>
+                </button>
                 <UserMenu />
                 <ThemeToggle />
               </div>

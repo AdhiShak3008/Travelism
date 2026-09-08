@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/store/authStore";
 
 export function UserMenu() {
-  const { user, isAuthenticated, openAuthModal, openSavedTrips, logout } = useAuth();
+  const { user, isAuthenticated, openAuthModal, openSavedTrips, openPreferences, logout } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -99,10 +99,14 @@ export function UserMenu() {
               <button
                 onClick={() => {
                   setIsOpen(false);
+                  openPreferences();
                 }}
-                className="w-full rounded-xl px-3 py-2 text-left text-xs font-semibold text-ink hover:bg-paper-2 flex items-center gap-2 transition"
+                className="w-full rounded-xl px-3 py-2 text-left text-xs font-semibold text-ink hover:bg-paper-2 flex items-center justify-between transition"
               >
-                <span>⚙️</span> Travel Preferences
+                <span className="flex items-center gap-2">
+                  <span>🧬</span> Travel DNA & Preferences
+                </span>
+                <span className="text-[10px] text-brand font-bold">Edit →</span>
               </button>
 
               <div className="border-t border-line/60 pt-1 mt-1">

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { useTrip } from "@/store/tripStore";
+import { useAuth } from "@/store/authStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
 
@@ -39,6 +40,7 @@ function coverUrl(id: string): string {
 
 export function DreamStage() {
   const startDream = useTrip((s) => s.startDream);
+  const openPreferences = useAuth((s) => s.openPreferences);
   const [text, setText] = useState("");
   const [coverIdx, setCoverIdx] = useState(0);
 
@@ -61,11 +63,18 @@ export function DreamStage() {
           </div>
           <div>
             <span className="display text-xl font-bold tracking-tight text-ink">Travelism</span>
-
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={openPreferences}
+            className="flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 px-3.5 py-1.5 text-xs font-bold text-brand shadow-xs hover:bg-brand/20 active:scale-95 transition"
+            title="Customize your personal Travel DNA, pace, budget & hotel tastes"
+          >
+            <span>🧬</span>
+            <span>Travel DNA</span>
+          </button>
           <UserMenu />
           <ThemeToggle />
         </div>
