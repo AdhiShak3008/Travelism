@@ -28,10 +28,25 @@ export function Flow() {
   const destinationName = useTrip((s) => s.blob.destinationName);
   const reset = useTrip((s) => s.reset);
   const openPreferences = useAuth((s) => s.openPreferences);
+  const isAuthenticated = useAuth((s) => s.isAuthenticated);
+  const hasCheckedInitialSession = useAuth((s) => s.hasCheckedInitialSession);
+  const restoreSession = useAuth((s) => s.restoreSession);
+
+  // Restore active 400-min session on initial mount
+  useEffect(() => {
+    if (!hasCheckedInitialSession) {
+      restoreSession();
+    }
+  }, [hasCheckedInitialSession, restoreSession]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   }, [stage]);
+
+  // If not logged in, render the Login Page directly at root — zero redirects, zero flash!
+  if (!isAuthenticated) {
+    return <AuthPage standalone={true} isRootLanding={true} />;
+  }
 
   if (isMobile) {
     return <MobileFlow />;

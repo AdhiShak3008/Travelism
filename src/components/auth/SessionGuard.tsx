@@ -7,7 +7,7 @@ import { useAuth } from "@/store/authStore";
 export function SessionGuard() {
   const router = useRouter();
   const pathname = usePathname();
-  const { restoreSession, checkSessionExpiry, isAuthenticated, hasCheckedInitialSession, logoutReason } = useAuth();
+  const { restoreSession, checkSessionExpiry, isAuthenticated } = useAuth();
   const initialCheckedRef = useRef(false);
 
   // 1. Initial session & device validation on load
@@ -24,11 +24,6 @@ export function SessionGuard() {
     } else if (res.status === "new_device") {
       if (pathname !== "/login") {
         router.push("/login?reason=new_device");
-      }
-    } else if (res.status === "none") {
-      // New visitor or incognito mode: redirect to login if landing directly
-      if (pathname === "/") {
-        router.push("/login?reason=welcome");
       }
     }
   }, [restoreSession, pathname, router]);

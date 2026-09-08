@@ -72,7 +72,7 @@ const TOURIST_PERKS = [
   { icon: "💎", title: "0% Markup", desc: "Direct net rates with vetted stays" },
 ];
 
-export function AuthPage({ standalone = false }: { standalone?: boolean }) {
+export function AuthPage({ standalone = false, isRootLanding = false }: { standalone?: boolean; isRootLanding?: boolean }) {
   const router = useRouter();
   const { isAuthModalOpen, closeAuthModal, login, loginAsDemo, logoutReason } = useAuth();
   const startDream = useTrip((s) => s.startDream);
@@ -213,7 +213,9 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
   };
 
   const handleBack = () => {
-    if (standalone) {
+    if (isRootLanding) {
+      loginAsDemo();
+    } else if (standalone) {
       router.push("/");
     } else {
       closeAuthModal();
@@ -222,7 +224,7 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
 
   const handleDemo = () => {
     loginAsDemo();
-    if (standalone) {
+    if (standalone && !isRootLanding) {
       router.push("/");
     }
   };
@@ -234,16 +236,19 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
     setTimeout(() => {
       login(email, tab === "signup" ? (name || "Traveler") : undefined);
       setLoading(false);
-      if (standalone) {
+      if (standalone && !isRootLanding) {
         router.push("/");
       }
     }, 500);
   };
 
   const handleExploreSpot = (spot: DiscoveredSpot) => {
+    if (!useAuth.getState().isAuthenticated) {
+      loginAsDemo();
+    }
     closeAuthModal();
     startDream(`${spot.name} for 7 days — exploring highlights, scenic spots, verified stays, and food.`);
-    if (standalone) {
+    if (standalone && !isRootLanding) {
       router.push("/");
     }
   };
@@ -267,7 +272,7 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
               onClick={handleBack}
               className="flex items-center gap-1.5 rounded-xl border border-line bg-paper-2 px-3 py-1.5 text-xs font-bold text-ink hover:border-brand/40 active:scale-95 transition shadow-2xs shrink-0"
             >
-              <span>← Back to Trip Explorer</span>
+              <span>{isRootLanding ? "⚡ Instant VIP Pass" : "← Back to Trip Explorer"}</span>
             </button>
 
             <div className="flex items-center gap-2 min-w-0">
