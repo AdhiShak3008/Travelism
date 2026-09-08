@@ -2,6 +2,8 @@
 
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileFlow } from "@/components/mobile/MobileFlow";
 import { StageProgress } from "@/components/ui/StageProgress";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
@@ -18,9 +20,14 @@ import { CheckoutStage } from "@/components/stages/CheckoutStage";
 import { TripModeStage } from "@/components/stages/TripModeStage";
 
 export function Flow() {
+  const isMobile = useIsMobile(768);
   const stage = useTrip((s) => s.stage);
   const destinationName = useTrip((s) => s.blob.destinationName);
   const reset = useTrip((s) => s.reset);
+
+  if (isMobile) {
+    return <MobileFlow />;
+  }
 
   const showHeader = stage !== "dream" && stage !== "investigate";
 
