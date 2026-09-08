@@ -151,7 +151,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
   },
 
   logout: () => {
-    set({ user: null, isAuthenticated: false });
+    set({ user: null, isAuthenticated: false, isAuthModalOpen: true });
   },
 
   saveCurrentTrip: (summary) => {
