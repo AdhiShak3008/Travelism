@@ -74,11 +74,12 @@ const TOURIST_PERKS = [
 
 export function AuthPage({ standalone = false }: { standalone?: boolean }) {
   const router = useRouter();
-  const { isAuthModalOpen, closeAuthModal, login, loginAsDemo } = useAuth();
+  const { isAuthModalOpen, closeAuthModal, login, loginAsDemo, logoutReason } = useAuth();
   const startDream = useTrip((s) => s.startDream);
 
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [queryReason, setQueryReason] = useState<string | null>(null);
 
   // Dynamic Infinite Spots & Screensaver State
   const [spots, setSpots] = useState<DiscoveredSpot[]>(INITIAL_GLOBAL_SPOTS);
@@ -97,6 +98,17 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
   const [homeAirport, setHomeAirport] = useState("Hyderabad / Mumbai");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0].url);
   const [loading, setLoading] = useState(false);
+
+  // Parse reason safely on client
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const r = p.get("reason");
+      if (r) setQueryReason(r);
+    }
+  }, []);
+
+  const activeReason = queryReason || logoutReason;
 
   // Active current spot
   const currentSpot = spots[currentIndex] || spots[0] || INITIAL_GLOBAL_SPOTS[0];
@@ -502,6 +514,40 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
             {/* RIGHT COLUMN: Uniformly Scaled Tourist Passport Portal */}
             <div className="min-w-0 rounded-3xl border border-line bg-card p-5 sm:p-7 shadow-lift space-y-5">
               
+              {/* Security Alerts / Session Expiry Notices */}
+              {activeReason === "expired" && (
+                <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2.5 shadow-sm">
+                  <span className="text-base">⏰</span>
+                  <div>
+                    <div className="font-extrabold text-xs">Session Expired (400 mins)</div>
+                    <div className="text-[11px] mt-0.5 opacity-90">
+                      Your travel session has reached the 400-minute safety limit. Please sign in to renew your traveler passport.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeReason === "new_device" && (
+                <div className="rounded-2xl border border-blue-500/40 bg-blue-500/10 p-3.5 text-xs text-blue-800 dark:text-blue-200 flex items-start gap-2.5 shadow-sm">
+                  <span className="text-base">🔒</span>
+                  <div>
+                    <div className="font-extrabold text-xs">New Device / Incognito Session</div>
+                    <div className="text-[11px] mt-0.5 opacity-90">
+                      A fresh browser or private incognito session was detected. Sign in with your pass or use Instant VIP Demo.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeReason === "welcome" && (
+                <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2 shadow-sm">
+                  <span className="text-base">✨</span>
+                  <div className="text-[11px] font-semibold">
+                    Welcome to Travelism! Sign in or use the 1-Click VIP Demo Pass to explore custom itineraries.
+                  </div>
+                </div>
+              )}
+
               {/* Header Title */}
               <div>
                 <div className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2.5 py-0.5 text-xs font-bold text-brand shadow-2xs mb-2">
@@ -511,7 +557,7 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
                   Welcome to Your Travel Passport
                 </h2>
                 <p className="text-xs sm:text-sm text-ink-soft mt-1 leading-relaxed">
-                  Sign in or create your free voyager profile to save custom itineraries and synchronize your Travel DNA across devices.
+                  Sign in or create your free voyager profile to save custom itineraries, synchronize Travel DNA, and unlock VIP hotel benefits.
                 </p>
               </div>
 
@@ -675,11 +721,13 @@ export function AuthPage({ standalone = false }: { standalone?: boolean }) {
                 </button>
               </form>
 
-              {/* Safe Travel Security Badge */}
-              <div className="pt-1 text-center text-[10px] text-ink-faint flex items-center justify-center gap-1.5">
-                <span>🔒 256-bit AES Encryption</span>
+              {/* Safe Travel Security Badge & 400m TTL Token Info */}
+              <div className="pt-1 text-center text-[10px] text-ink-faint flex flex-wrap items-center justify-center gap-1.5">
+                <span>🔒 256-bit AES</span>
                 <span>·</span>
-                <span>Zero Spam</span>
+                <span>400m Session TTL</span>
+                <span>·</span>
+                <span>Device Fingerprint Guard</span>
                 <span>·</span>
                 <span>Verified Traveler ID</span>
               </div>

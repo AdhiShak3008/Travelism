@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter, Fraunces } from "next/font/google";
 import "./globals.css";
+import { themeInitScript } from "@/components/ThemeToggle";
+import { SessionGuard } from "@/components/auth/SessionGuard";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -21,8 +23,6 @@ export const metadata: Metadata = {
     "Brief an intelligent travel intelligence team. Watch them investigate, then assemble a complete, evidence-backed trip.",
 };
 
-import { themeInitScript } from "@/components/ThemeToggle";
-
 export default function RootLayout({
   children,
 }: {
@@ -33,7 +33,10 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className="min-h-screen bg-paper font-sans text-ink antialiased">{children}</body>
+      <body className="min-h-screen bg-paper font-sans text-ink antialiased">
+        <SessionGuard />
+        {children}
+      </body>
     </html>
   );
 }

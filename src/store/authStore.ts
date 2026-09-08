@@ -2,6 +2,13 @@
 
 import { create } from "zustand";
 import type { StayMode } from "@/lib/types";
+import {
+  saveActiveSession,
+  validateStoredSession,
+  clearActiveSession,
+  SESSION_TTL_MS,
+  SESSION_TTL_MINUTES,
+} from "@/lib/session";
 
 export interface TravelPreferences {
   currency: "INR" | "USD" | "EUR" | "GBP" | "JPY" | "AED";
@@ -95,12 +102,17 @@ const DEMO_USER: UserProfile = {
   preferences: { ...DEFAULT_PREFERENCES },
 };
 
+export type LogoutReason = "expired" | "new_device" | "manual" | null;
+
 interface AuthStore {
   user: UserProfile | null;
   isAuthenticated: boolean;
   isAuthModalOpen: boolean;
   isSavedTripsOpen: boolean;
   isPreferencesOpen: boolean;
+  sessionExpiresAt: number | null;
+  logoutReason: LogoutReason;
+  hasCheckedInitialSession: boolean;
 
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -111,7 +123,10 @@ interface AuthStore {
 
   login: (email: string, name?: string) => void;
   loginAsDemo: () => void;
-  logout: () => void;
+  logout: (reason?: LogoutReason) => void;
+  restoreSession: () => { status: "valid" | "expired" | "new_device" | "none" };
+  checkSessionExpiry: () => boolean;
+
   saveCurrentTrip: (summary: Omit<SavedTripSummary, "id" | "createdAt">) => void;
   removeSavedTrip: (tripId: string) => void;
   updatePreferences: (prefs: Partial<TravelPreferences>) => void;
@@ -123,6 +138,9 @@ export const useAuth = create<AuthStore>((set, get) => ({
   isAuthModalOpen: false,
   isSavedTripsOpen: false,
   isPreferencesOpen: false,
+  sessionExpiresAt: null,
+  logoutReason: null,
+  hasCheckedInitialSession: false,
 
   openAuthModal: () => set({ isAuthModalOpen: true }),
   closeAuthModal: () => set({ isAuthModalOpen: false }),
@@ -143,15 +161,91 @@ export const useAuth = create<AuthStore>((set, get) => ({
       savedTrips: [],
       preferences: { ...DEFAULT_PREFERENCES },
     };
-    set({ user: newUser, isAuthenticated: true, isAuthModalOpen: false });
+    
+    // Save active session for 400 minutes
+    const session = saveActiveSession(newUser);
+    set({
+      user: newUser,
+      isAuthenticated: true,
+      isAuthModalOpen: false,
+      sessionExpiresAt: session.expiresAt,
+      logoutReason: null,
+    });
   },
 
   loginAsDemo: () => {
-    set({ user: { ...DEMO_USER }, isAuthenticated: true, isAuthModalOpen: false });
+    const demoUser = { ...DEMO_USER };
+    const session = saveActiveSession(demoUser);
+    set({
+      user: demoUser,
+      isAuthenticated: true,
+      isAuthModalOpen: false,
+      sessionExpiresAt: session.expiresAt,
+      logoutReason: null,
+    });
   },
 
-  logout: () => {
-    set({ user: null, isAuthenticated: false, isAuthModalOpen: true });
+  logout: (reason: LogoutReason = "manual") => {
+    clearActiveSession();
+    set({
+      user: null,
+      isAuthenticated: false,
+      isAuthModalOpen: false,
+      sessionExpiresAt: null,
+      logoutReason: reason,
+    });
+  },
+
+  restoreSession: () => {
+    const res = validateStoredSession();
+    if (res.status === "valid" && res.session?.user) {
+      set({
+        user: res.session.user,
+        isAuthenticated: true,
+        sessionExpiresAt: res.session.expiresAt,
+        logoutReason: null,
+        hasCheckedInitialSession: true,
+      });
+      return { status: "valid" };
+    } else if (res.status === "expired") {
+      set({
+        user: null,
+        isAuthenticated: false,
+        sessionExpiresAt: null,
+        logoutReason: "expired",
+        hasCheckedInitialSession: true,
+      });
+      return { status: "expired" };
+    } else if (res.status === "new_device") {
+      set({
+        user: null,
+        isAuthenticated: false,
+        sessionExpiresAt: null,
+        logoutReason: "new_device",
+        hasCheckedInitialSession: true,
+      });
+      return { status: "new_device" };
+    } else {
+      set({
+        user: null,
+        isAuthenticated: false,
+        sessionExpiresAt: null,
+        logoutReason: null,
+        hasCheckedInitialSession: true,
+      });
+      return { status: "none" };
+    }
+  },
+
+  checkSessionExpiry: () => {
+    const { sessionExpiresAt, isAuthenticated, logout } = get();
+    if (!isAuthenticated || !sessionExpiresAt) return false;
+
+    if (Date.now() >= sessionExpiresAt) {
+      logout("expired");
+      return true; // was expired
+    }
+    return false;
   },
 
   saveCurrentTrip: (summary) => {
@@ -162,36 +256,36 @@ export const useAuth = create<AuthStore>((set, get) => ({
       id: `trip_saved_${Date.now()}`,
       createdAt: "Just now",
     };
-    set({
-      user: {
-        ...user,
-        savedTrips: [newSaved, ...user.savedTrips],
-      },
-    });
+    const updatedUser = {
+      ...user,
+      savedTrips: [newSaved, ...user.savedTrips],
+    };
+    saveActiveSession(updatedUser);
+    set({ user: updatedUser });
   },
 
   removeSavedTrip: (tripId: string) => {
     const { user } = get();
     if (!user) return;
-    set({
-      user: {
-        ...user,
-        savedTrips: user.savedTrips.filter((t) => t.id !== tripId),
-      },
-    });
+    const updatedUser = {
+      ...user,
+      savedTrips: user.savedTrips.filter((t) => t.id !== tripId),
+    };
+    saveActiveSession(updatedUser);
+    set({ user: updatedUser });
   },
 
   updatePreferences: (prefs) => {
     const { user } = get();
     if (!user) return;
-    set({
-      user: {
-        ...user,
-        preferences: {
-          ...user.preferences,
-          ...prefs,
-        },
+    const updatedUser = {
+      ...user,
+      preferences: {
+        ...user.preferences,
+        ...prefs,
       },
-    });
+    };
+    saveActiveSession(updatedUser);
+    set({ user: updatedUser });
   },
 }));
