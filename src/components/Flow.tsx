@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -24,6 +25,10 @@ export function Flow() {
   const stage = useTrip((s) => s.stage);
   const destinationName = useTrip((s) => s.blob.destinationName);
   const reset = useTrip((s) => s.reset);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [stage]);
 
   if (isMobile) {
     return <MobileFlow />;

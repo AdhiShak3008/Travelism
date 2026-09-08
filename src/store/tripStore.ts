@@ -170,12 +170,20 @@ export const useTrip = create<TripStore>((set, get) => ({
 
   setStage: (s) => {
     const { maxStageReached } = get();
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
     set({ stage: s, maxStageReached: furthestStage(maxStageReached, s) });
   },
 
   goToStage: (s) => {
     const { maxStageReached } = get();
-    if (stageRank(s) <= stageRank(maxStageReached)) set({ stage: s });
+    if (stageRank(s) <= stageRank(maxStageReached)) {
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      }
+      set({ stage: s });
+    }
   },
 
   startDream: async (dream) => {

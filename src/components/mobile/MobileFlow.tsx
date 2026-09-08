@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { LightboxProvider } from "@/components/ui/Lightbox";
@@ -19,6 +20,11 @@ import { MobileTripModeStage } from "./stages/MobileTripModeStage";
 
 export function MobileFlow() {
   const stage = useTrip((s) => s.stage);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [stage]);
+
   const showHeader = stage !== "dream" && stage !== "investigate";
   const showChatSheet = stage !== "dream" && stage !== "investigate";
 
