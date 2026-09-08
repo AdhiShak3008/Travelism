@@ -98,6 +98,30 @@ async function scrapeGoogleCustomSearchImages(query: string, limit = 3, signal?:
 }
 
 /**
+ * 0.1 Google Places Official Photos API (when Google API key configured)
+ */
+async function scrapeGooglePlacesPhotos(query: string, limit = 3, signal?: AbortSignal): Promise<string[]> {
+  const apiKey = ENV.GOOGLE_MAPS_API_KEY || ENV.GOOGLE_SEARCH_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const u = new URL("https://maps.googleapis.com/maps/api/place/findplacefromtext/json");
+    u.searchParams.set("input", query);
+    u.searchParams.set("inputtype", "textquery");
+    u.searchParams.set("fields", "photos,place_id,name");
+    u.searchParams.set("key", apiKey);
+    const res = await fetch(u.toString(), { signal });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { candidates?: { photos?: { photo_reference: string }[] }[] };
+    const photos = data.candidates?.[0]?.photos ?? [];
+    return photos
+      .slice(0, limit)
+      .map((p) => `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1200&photo_reference=${p.photo_reference}&key=${apiKey}`);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * 1. Wikipedia PageImages query
  */
 async function scrapeWikipediaPageImage(query: string, signal?: AbortSignal): Promise<string | null> {
@@ -263,16 +287,18 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
-  // 0. Google Custom Search (when configured)
-  if (CAP.googleImages) {
-    try {
-      const googleResults = await Promise.all(
-        searchTerms.slice(0, 2).map((term) => scrapeGoogleCustomSearchImages(term, limit, signal).catch(() => []))
-      );
-      googleResults.flat().forEach((u) => addUrls([u], "Google Images"));
-    } catch {
-      // continue
-    }
+  // 0. Google Custom Search & Google Places API (when configured)
+  try {
+    const [googleSearchUrls, googlePlaceUrls] = await Promise.all([
+      CAP.googleImages
+        ? Promise.all(searchTerms.slice(0, 2).map((term) => scrapeGoogleCustomSearchImages(term, limit, signal).catch(() => [])))
+        : Promise.resolve([]),
+      Promise.all(searchTerms.slice(0, 2).map((term) => scrapeGooglePlacesPhotos(term, limit, signal).catch(() => []))),
+    ]);
+    googleSearchUrls.flat().forEach((u) => addUrls([u], "Google Images"));
+    googlePlaceUrls.flat().forEach((u) => addUrls([u], "Google Places"));
+  } catch {
+    // continue
   }
 
   // 1 & 2. Wikipedia PageImages & Wikimedia Commons in parallel
