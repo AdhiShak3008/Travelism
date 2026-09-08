@@ -208,6 +208,25 @@ export function getCuratedExperienceImage(category: string, name: string): Media
   return img(pool, "attraction", "editorial", "Travelism Curated");
 }
 
+export function getCuratedPlaceImage(name: string, destination: string, category = "attraction"): MediaImage {
+  const text = `${name} ${destination} ${category}`.toLowerCase();
+  let pool = "himalaya";
+  if (/beach|coast|cove|island|sand|bay|shore/i.test(text)) pool = "beach";
+  else if (/lake|tso|tarn|reservoir|water|river/i.test(text)) pool = "lake";
+  else if (/fall|cascade|waterfall|gorge/i.test(text)) pool = "waterfall";
+  else if (/monastery|gompa|monk|stupa|temple|shrine|church|cathedral|mosque|pagoda/i.test(text)) pool = "monastery";
+  else if (/pass|rohtang|khardung|chang|peak|summit|glacier|snow|ridge|cliff/i.test(text)) pool = "himalaya";
+  else if (/valley|solang|spiti|sissu|kashmiri|meadow|gulaba/i.test(text)) pool = "adventure";
+  else if (/market|bazaar|street|mall|square/i.test(text)) pool = "city";
+  else if (/fort|palace|castle|monument|memorial|ruins|heritage/i.test(text)) pool = "cultural";
+  else if (/park|sanctuary|reserve|forest|safari|wildlife/i.test(text)) pool = "wildlife";
+  else if (/hotel|resort|stay|cottage|camp|homestay/i.test(text)) pool = "resort";
+  else if (/village|town|settlement|kothi/i.test(text)) pool = "town";
+  else if (/road|highway|viewpoint|drive/i.test(text)) pool = "road";
+
+  return img(pool, "attraction", "editorial", "Travelism Curated");
+}
+
 function hash(s: string): string {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;

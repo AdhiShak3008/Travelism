@@ -265,45 +265,34 @@ export async function scrapeLiveSubjectImages(
 
   // 0. Google Custom Search (when configured)
   if (CAP.googleImages) {
-    for (const term of searchTerms) {
-      if (results.length >= limit) break;
-      try {
-        const googleUrls = await scrapeGoogleCustomSearchImages(term, limit - results.length, signal);
-        addUrls(googleUrls, "Google Images");
-      } catch {
-        // continue
-      }
-    }
-  }
-
-  // 1. Wikipedia PageImages
-  for (const term of searchTerms) {
-    if (results.length >= limit) break;
     try {
-      const wikiUrl = await scrapeWikipediaPageImage(term, signal);
-      if (wikiUrl) addUrls([wikiUrl], "Wikipedia");
+      const googleResults = await Promise.all(
+        searchTerms.slice(0, 2).map((term) => scrapeGoogleCustomSearchImages(term, limit, signal).catch(() => []))
+      );
+      googleResults.flat().forEach((u) => addUrls([u], "Google Images"));
     } catch {
       // continue
     }
   }
 
-  // 2. Wikimedia Commons
+  // 1 & 2. Wikipedia PageImages & Wikimedia Commons in parallel
   if (results.length < limit) {
-    for (const term of searchTerms) {
-      if (results.length >= limit) break;
-      try {
-        const commons = await scrapeCommonsImages(term, limit - results.length, signal);
-        addUrls(commons, "Wikimedia Commons");
-      } catch {
-        // continue
-      }
+    try {
+      const [wikiResults, commonsResults] = await Promise.all([
+        Promise.all(searchTerms.slice(0, 2).map((term) => scrapeWikipediaPageImage(term, signal).catch(() => null))),
+        Promise.all(searchTerms.slice(0, 2).map((term) => scrapeCommonsImages(term, limit, signal).catch(() => []))),
+      ]);
+      wikiResults.forEach((u) => { if (u) addUrls([u], "Wikipedia"); });
+      commonsResults.flat().forEach((u) => addUrls([u], "Wikimedia Commons"));
+    } catch {
+      // continue
     }
   }
 
-  // 3. Tavily Live Web Search Images
+  // 3. Tavily Live Web Search Images (fast fallback)
   if (results.length < limit) {
     try {
-      const tavilyUrls = await tavilySearchImages(`${cleanSubject} ${destClean} photo`, limit * 2, signal);
+      const tavilyUrls = await tavilySearchImages(`${cleanSubject} ${destClean} photo`, limit * 2, signal).catch(() => []);
       addUrls(tavilyUrls, "Web Verified");
     } catch {
       // ignore
@@ -313,7 +302,7 @@ export async function scrapeLiveSubjectImages(
   // 4. DuckDuckGo Live Images
   if (results.length < limit) {
     try {
-      const ddgUrls = await scrapeDuckDuckGoImages(`${cleanSubject} ${destClean}`, limit - results.length, signal);
+      const ddgUrls = await scrapeDuckDuckGoImages(`${cleanSubject} ${destClean}`, limit - results.length, signal).catch(() => []);
       addUrls(ddgUrls, "Web Search");
     } catch {
       // ignore

@@ -17,7 +17,7 @@ import type { DestinationDataset } from "../research/provider";
 import { parseIntent, type Intent } from "./intent";
 import { tavilySearch, tavilySearchImages } from "./tavily";
 import { scrapeLiveSubjectImages } from "./imageScraper";
-import { img, getCuratedExperienceImage } from "../research/media";
+import { img, getCuratedExperienceImage, getCuratedPlaceImage } from "../research/media";
 import { crawlMany, type CrawledPage } from "./crawler";
 import {
   extractOverview,
@@ -192,8 +192,8 @@ export async function investigate(
   // Fetch real verified subject-matched photos per place
   emit({ agent: "lens", phase: "working", status: "Gathering verified landmark photography" });
   const [rawWikiPlaceImages, heroImgs] = await Promise.all([
-    mapLimited(extractedPlaces, 4, (p) => withTimeout(scrapeLiveSubjectImages(p.name, dest, "attraction", 3, signal).catch(() => []), 2500, [])),
-    withTimeout(scrapeLiveSubjectImages(`${dest} landscape scenery landmark`, dest, "landscape", 2, signal).catch(() => []), 2000, []),
+    mapLimited(extractedPlaces, 4, (p) => withTimeout(scrapeLiveSubjectImages(p.name, dest, "attraction", 3, signal).catch(() => []), 4000, [])),
+    withTimeout(scrapeLiveSubjectImages(`${dest} landscape scenery landmark`, dest, "landscape", 2, signal).catch(() => []), 3500, []),
   ]);
   const usedImageUrls = new Set<string>();
   const wikiPlaceImages = rawWikiPlaceImages.map((arr) => {
@@ -204,6 +204,7 @@ export async function investigate(
 
   const places: Place[] = extractedPlaces.map((p, i) => {
     const wiki = (wikiPlaceImages[i] ?? []).slice(0, 4);
+    const placeImages = wiki.length > 0 ? wiki : [getCuratedPlaceImage(p.name, dest, p.category)];
     return {
       id: `place_${i}_${destinationKey(p.name)}`,
       canonicalName: p.name,
@@ -211,7 +212,7 @@ export async function investigate(
       category: p.category ?? "core",
       blurb: p.blurb,
       description: p.description ?? p.blurb,
-      images: wiki.length ? wiki : [placeholderImage("attraction")],
+      images: placeImages,
       videoIds: [],
       durationHours: p.durationHours ?? 2,
       distanceKm: p.distanceKm,
@@ -471,7 +472,7 @@ export async function investigate(
       tagline: overview.tagline ?? `Discover ${dest}.`,
       region: overview.region ?? intent.region ?? "",
       gateway,
-      hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape").url,
+      hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape", dest, dest).url,
       bestSeason: overview.bestSeason ?? "Year-round",
       facts: overview.facts ?? [],
     },
@@ -572,7 +573,7 @@ export async function refinePlaces(
       category: p.category ?? "core",
       blurb: p.blurb,
       description: p.description ?? p.blurb,
-      images: imgs.length ? imgs : [placeholderImage("attraction")],
+      images: imgs.length ? imgs : [getCuratedPlaceImage(p.name, destination, p.category)],
       videoIds: [],
       durationHours: p.durationHours ?? 2,
       distanceKm: p.distanceKm,
@@ -739,15 +740,8 @@ function collectImages(pages: CrawledPage[]): MediaImage[] {
   return out;
 }
 
-function placeholderImage(category: MediaImage["category"]): MediaImage {
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='800' height='500'><rect width='100%' height='100%' fill='%230f121a'/><text x='50%' y='50%' fill='%23334155' font-family='sans-serif' font-size='20' text-anchor='middle'>Travelism Verified</text></svg>`;
-  return {
-    id: `img_ph_${category}`,
-    url: `data:image/svg+xml;utf8,${svg}`,
-    category,
-    credit: "Travelism",
-    provenance: "editorial",
-  };
+function placeholderImage(category: MediaImage["category"], name = "Scenic Destination", dest = "Himalayas"): MediaImage {
+  return getCuratedPlaceImage(name, dest, category);
 }
 
 async function buildConflicts(
