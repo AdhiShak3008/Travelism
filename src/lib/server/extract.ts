@@ -42,19 +42,14 @@ export async function extractOverview(
   signal?: AbortSignal
 ): Promise<Overview> {
   const corpus = pageCorpus(pages, 8);
+  const prompt = corpus
+    ? `DESTINATION: ${destination}\n\nFrom the pages below, produce a JSON object:\n{ "tagline": short evocative one-liner, "summary": 2-3 sentence editorial overview, "region": administrative region/country, "bestSeason": best months to visit, "gateway": nearest major airport/city to fly into, "facts": up to 5 concrete facts (altitude, driving/transit times, highlights) }\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\n\nProduce an accurate, high-fidelity travel overview JSON object for ${destination}:\n{ "tagline": short evocative one-liner, "summary": 2-3 sentence editorial overview, "region": administrative region/country, "bestSeason": best months to visit, "gateway": nearest major airport/city to fly into, "facts": up to 5 concrete facts (altitude, driving/transit times, highlights) }`;
+
   return chatJSON(
     [
       { role: "system", content: SYS },
-      {
-        role: "user",
-        content: `DESTINATION: ${destination}
-
-From the pages below, produce a JSON object:
-{ "tagline": short evocative one-liner, "summary": 2-3 sentence editorial overview, "region": administrative region/country, "bestSeason": best months to visit, "gateway": nearest major airport/city to fly into, "facts": up to 5 concrete facts (altitude, driving/transit times, highlights) }
-
-PAGES:
-${corpus}`,
-      },
+      { role: "user", content: prompt },
     ],
     OverviewSchema,
     { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
@@ -86,22 +81,14 @@ export async function extractPlaces(
   signal?: AbortSignal
 ): Promise<ExtractedPlace[]> {
   const corpus = pageCorpus(pages, 10);
+  const prompt = corpus
+    ? `DESTINATION: ${destination}\n\nList the notable places/attractions/beaches/temples/viewpoints travelers actually visit in and around ${destination}, grounded in the pages. Aim for 6-12 places.\nResolve duplicates into ONE entry with altNames.\ncategory: "core" = must-see in the town/hub; "adventure" = trek/water sport/wildlife/expedition; "enroute" = worth stopping on the way in or a nearby day trip.\nEVERY place MUST have a non-empty "name" and a one-line "blurb".\nReturn JSON exactly: { "places": [ { "name": string, "altNames": string[], "category": "core"|"adventure"|"enroute", "blurb": string, "description": string, "durationHours": number, "distanceKm": number, "travelTime": string, "bestTime": string, "difficulty": "easy"|"moderate"|"hard", "accessible": "yes"|"partial"|"no", "permitRequired": boolean, "facts": string[] } ] }\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\n\nList 6-10 real, famous, highly-rated places/attractions/landmarks in and around ${destination}.\ncategory: "core" = must-see in the hub; "adventure" = outdoor/trek/water sport/nature; "enroute" = nearby day trip or scenic stop.\nEVERY place MUST have a clean specific "name" and an evocative "blurb".\nReturn JSON: { "places": [ { "name": string, "altNames": string[], "category": "core"|"adventure"|"enroute", "blurb": string, "description": string, "durationHours": number, "distanceKm": number, "travelTime": string, "bestTime": string, "difficulty": "easy"|"moderate"|"hard", "accessible": "yes"|"partial"|"no", "permitRequired": boolean, "facts": string[] } ] }`;
+
   const res = await chatJSON(
     [
       { role: "system", content: SYS },
-      {
-        role: "user",
-        content: `DESTINATION: ${destination}
-
-List the notable places/attractions/beaches/temples/viewpoints travelers actually visit in and around ${destination}, grounded in the pages. Aim for 6-12 places.
-Resolve duplicates (same place under different names) into ONE entry with altNames.
-category: "core" = must-see in the town/hub; "adventure" = trek/water sport/wildlife/expedition; "enroute" = worth stopping on the way in or a nearby day trip.
-EVERY place MUST have a non-empty "name" and a one-line "blurb".
-Return JSON exactly: { "places": [ { "name": string, "altNames": string[], "category": "core"|"adventure"|"enroute", "blurb": string, "description": string, "durationHours": number, "distanceKm": number, "travelTime": string, "bestTime": string, "difficulty": "easy"|"moderate"|"hard", "accessible": "yes"|"partial"|"no", "permitRequired": boolean, "facts": string[] } ] }
-
-PAGES:
-${corpus}`,
-      },
+      { role: "user", content: prompt },
     ],
     PlacesSchema,
     { signal, reasoning: "low", maxTokens: 6000 }
@@ -137,34 +124,14 @@ export async function extractHotels(
   const focus = priorities.length
     ? `Traveler priorities to weight heavily: ${priorities.join(", ")}. Estimate cleanliness/bathroomScore (0-10) from review language.`
     : "";
+  const prompt = corpus
+    ? `DESTINATION: ${destination}\n${focus}\n\nFrom the pages, extract 3-6 real hotels/resorts with accurate pricing in INR (convert USD $ to INR using 1 USD = 87 INR, e.g. $400/night -> 34800 INR/night).\nInclude: name, location, room, pricePerNight, cleanliness, bathroomScore, amenities, policies, hasElevator, overallRating, reviewCount, whyReasons.\nReturn JSON: { "hotels": [ ... ] }\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\n${focus}\n\nList 3-5 authentic, real hotels/resorts/stays in ${destination} ranging from boutique to luxury with realistic converted pricing in INR (1 USD ≈ 87 INR). Include real amenities, clean score (0-10), bathroom score (0-10), policies, and whyReasons.\nReturn JSON: { "hotels": [ ... ] }`;
+
   const res = await chatJSON(
     [
       { role: "system", content: SYS },
-      {
-        role: "user",
-        content: `DESTINATION: ${destination}
-${focus}
-
-From the pages, extract 3-6 real hotels/resorts with accurate pricing in INR (convert USD $ to INR using 1 USD = 87 INR, e.g. $400/night -> 34800 INR/night).
-Include:
-- name: Hotel Name
-- location: neighborhood/area in ${destination}
-- room: e.g. "Deluxe Ocean View Room", "King Suite", "Standard Double Room"
-- pricePerNight: price per night in INR (e.g. 28000 for a luxury US hotel, 6500 for a boutique stay in Asia)
-- cleanliness: score out of 10
-- bathroomScore: score out of 10
-- amenities: list of 4-8 top features (e.g. "Rooftop Pool", "Ocean View", "Free High-Speed Wi-Fi", "Full-Service Spa", "Valet Parking", "Fitness Center", "Beach Access", "Breakfast Included", "Air Conditioning")
-- policies: clear human-readable sentences (e.g. "Check-in: 3:00 PM · Check-out: 11:00 AM", "Free cancellation up to 48h before arrival", "Pet-friendly accommodation"). NEVER return shorthand codes like "ckin3" or "petok".
-- hasElevator: boolean
-- overallRating: score out of 5
-- reviewCount: number of reviews
-- whyReasons: 2-3 reasons why this stay was selected
-
-Return JSON: { "hotels": [ ... ] }
-
-PAGES:
-${corpus}`,
-      },
+      { role: "user", content: prompt },
     ],
     HotelsSchema,
     { signal, reasoning: "low", maxTokens: 4500 }
@@ -241,19 +208,15 @@ export async function extractPermits(
   pages: CrawledPage[],
   signal?: AbortSignal
 ): Promise<ExtractedPermit[]> {
-  if (pages.length === 0) return [];
   const corpus = pageCorpus(pages, 6);
+  const prompt = corpus
+    ? `DESTINATION: ${destination}\nExtract any permits/documents/visas required to visit ${destination}, grounded in the pages. Return JSON { "permits": [ {name, requirement, status, estimatedCost(INR), process, responsible} ] }. If none are required, return an empty array.\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\nList any required permits/visas/entry passes for visiting ${destination} (e.g. National Park pass, high-altitude pass permit, tourist visa). If none are required, return empty array.\nReturn JSON: { "permits": [ ... ] }`;
+
   const res = await chatJSON(
     [
       { role: "system", content: SYS },
-      {
-        role: "user",
-        content: `DESTINATION: ${destination}
-Extract any permits/documents/visas required to visit ${destination}, grounded in the pages. Return JSON { "permits": [ {name, requirement, status, estimatedCost(INR), process, responsible} ] }. If none are required, return an empty array.
-
-PAGES:
-${corpus}`,
-      },
+      { role: "user", content: prompt },
     ],
     PermitsSchema,
     { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
@@ -283,18 +246,14 @@ export async function extractFood(
   signal?: AbortSignal
 ): Promise<ExtractedFood[]> {
   const corpus = pageCorpus(pages, 6);
-  if (!corpus) return [];
+  const prompt = corpus
+    ? `DESTINATION: ${destination}\nExtract ACTUAL restaurants/cafes/eateries (named establishments, not article titles) in ${destination} from the pages. Aim for 3-6. Return JSON { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }.\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\nList 3-5 real, highly-rated restaurants/cafes/eateries and regional specialties in ${destination}.\nReturn JSON: { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }`;
+
   const res = await chatJSON(
     [
       { role: "system", content: SYS },
-      {
-        role: "user",
-        content: `DESTINATION: ${destination}
-Extract ACTUAL restaurants/cafes/eateries (named establishments, not article titles) in ${destination} from the pages. Aim for 2-4. Return JSON { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }. Only real named places supported by the text.
-
-PAGES:
-${corpus}`,
-      },
+      { role: "user", content: prompt },
     ],
     FoodSchema,
     { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
@@ -334,32 +293,36 @@ export async function extractExperiences(
   signal?: AbortSignal
 ): Promise<ExtractedExperience[]> {
   const corpus = pageCorpus(pages, 8);
-  if (!corpus) return [];
-  const res = await chatJSON(
-    [
-      { role: "system", content: SYS },
-      {
-        role: "user",
-        content: `DESTINATION: ${destination}
+  const prompt = corpus
+    ? `DESTINATION: ${destination}
 Extract BOOKABLE, individual single-session activities and experiences in ${destination} (e.g. white water rafting, monastery guided tour, paragliding, boat charters, snorkeling/scuba, wildlife safari, museum passes, food & wine walks, day excursions). Aim for 4-8 activities.
 
 CRITICAL RULES:
 1. EXCLUDE MULTI-DAY PACKAGES: NEVER extract multi-day tour agency vacation packages (e.g. REJECT "6 Nights/7 Days Tour Package", "5D/4N Package", or hotel+cab bundles). Duration MUST be between 1 and 8 hours for a single activity.
-2. PRICING REALISM: Prices must reflect realistic per-person activity rates in INR:
+2. PRICING REALISM: Prices must reflect realistic per-person activity rates in INR (convert foreign USD rates using 1 USD ≈ 87 INR):
    - Guided walking tours & museum passes: 500 – 1,800 INR
    - White-water rafting, kayaking, water sports: 1,200 – 3,500 INR
    - Paragliding, adventure zip-lining, day safaris: 2,500 – 5,000 INR
    - Private boat/yacht charter: 3,000 – 8,000 INR per person
-   - Free attractions/prayers: 0 INR
-   - High-cost international activities (US/Europe/Japan/Dubai): convert realistic rates ($40 – $180 ≈ 3,500 – 15,500 INR).
-   - NEVER output exorbitant numbers like 40,000+ INR for a single rafting or paragliding session.
-3. Capture: name (clean activity name), category ("theme_park"|"water"|"adventure"|"wildlife"|"tour"|"cultural"|"wellness"|"food_exp"|"nightlife"), blurb, price (in INR), priceNote (e.g. "per person", "incl. gear"), perPerson (boolean), durationHours (1-8), difficulty ("easy"|"moderate"|"hard"), familyFriendly, minAge, location, whyRecommended.
+   - High-cost international activities (US/Europe/Japan/Dubai): $40 – $180 ≈ 3,500 – 15,500 INR.
+3. Capture: name, category ("theme_park"|"water"|"adventure"|"wildlife"|"tour"|"cultural"|"wellness"|"food_exp"|"nightlife"), blurb, price (in INR), priceNote, perPerson (boolean), durationHours (1-8), difficulty ("easy"|"moderate"|"hard"), familyFriendly, minAge, location, whyRecommended.
 
 Return JSON: { "experiences": [ ... ] }
 
 PAGES:
-${corpus}`,
-      },
+${corpus}`
+    : `DESTINATION: ${destination}
+Provide 4-8 genuine, highly popular bookable single-session activities and experiences in ${destination} (e.g. boat cruises, water sports, guided walking tours, wildlife safaris, food walks, museum passes, adventure sports).
+
+CRITICAL RULES:
+1. NO multi-day tour packages. Duration MUST be between 1 and 8 hours.
+2. Real market pricing in INR (converted from foreign currencies, e.g. $50 = 4350 INR).
+3. Return JSON: { "experiences": [ { name, category, blurb, price, priceNote, perPerson, durationHours, difficulty, familyFriendly, minAge, location, whyRecommended } ] }`;
+
+  const res = await chatJSON(
+    [
+      { role: "system", content: SYS },
+      { role: "user", content: prompt },
     ],
     ExperienceSchema,
     { signal, reasoning: "low", maxTokens: 3500 }
