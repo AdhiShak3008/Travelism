@@ -50,7 +50,7 @@ export function PackageStage() {
   const allOutbound = dataset.flights.filter(isOutbound);
   const allReturn = dataset.flights.filter((f) => !isOutbound(f));
 
-  const isNoHotel = blob.preferences.stayMode === "none" || (blob.hotels.length === 0 && blob.preferences.stayMode !== "wild_camping");
+  const isNoHotel = blob.preferences.stayMode === "none" && blob.hotels.length === 0;
   const primaryHotel = blob.hotels[0] || (isNoHotel ? null : dataset.hotels[0]);
   const alternativeHotels = dataset.hotels.filter((h) => h.id !== primaryHotel?.id);
 

@@ -21,18 +21,6 @@ export function InvestigateStage() {
   const totalAgents = agents.length;
   const overallPct = Math.round((totalDone / Math.max(1, totalAgents)) * 100);
 
-  // Auto-expand newly working parent divisions as the investigation pipeline advances
-  useEffect(() => {
-    const working = parentStates.filter((p) => p.phase === "working" || p.phase === "done");
-    if (working.length > 0) {
-      setExpandedParentIds((prev) => {
-        const next = new Set(prev);
-        working.forEach((p) => next.add(p.meta.id));
-        return next;
-      });
-    }
-  }, [parentStates]);
-
   const toggleParent = (id: string) => {
     setExpandedParentIds((prev) => {
       const next = new Set(prev);
@@ -42,9 +30,10 @@ export function InvestigateStage() {
     });
   };
 
-  const allExpanded = expandedParentIds.size === PARENT_AGENTS.length;
+  const hasAnyExpanded = expandedParentIds.size > 0;
+
   const toggleAll = () => {
-    if (allExpanded) {
+    if (hasAnyExpanded) {
       setExpandedParentIds(new Set());
     } else {
       setExpandedParentIds(new Set(PARENT_AGENTS.map((p) => p.id)));
@@ -93,10 +82,11 @@ export function InvestigateStage() {
           <span>Parent Agent Divisions ({parentStates.length})</span>
         </div>
         <button
+          type="button"
           onClick={toggleAll}
-          className="text-xs font-bold text-brand hover:underline flex items-center gap-1 cursor-pointer"
+          className="text-xs font-bold text-brand hover:underline flex items-center gap-1 cursor-pointer select-none py-1 px-2 rounded-lg hover:bg-brand/10 transition"
         >
-          {allExpanded ? "Collapse All ▲" : "Expand All ▼"}
+          {hasAnyExpanded ? "Collapse All ▲" : "Expand All ▼"}
         </button>
       </div>
 

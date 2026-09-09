@@ -726,7 +726,13 @@ export const useTrip = create<TripStore>((set, get) => ({
     } else {
       hotels = [hotel];
     }
-    let next = { ...blob, hotels, updatedAt: now() };
+    const stayMode: StayMode = hotel.category === "wild_camping" ? "wild_camping" : "hotels";
+    const nextPrefs: Preferences = {
+      ...blob.preferences,
+      stayMode,
+      isSelfSupported: stayMode === "wild_camping",
+    };
+    let next: TripBlob = { ...blob, hotels, preferences: nextPrefs, updatedAt: now() };
     next.costs = computeCosts(next);
     const after = costTotals(next.costs).total;
     set({ blob: next });
