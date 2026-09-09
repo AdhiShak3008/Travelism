@@ -117,25 +117,43 @@ export async function investigate(
   async function discoverAndCrawl(query: string, n: number): Promise<CrawledPage[]> {
     try {
       const results = await withTimeout(
-        tavilySearch(query, { maxResults: n, depth: "basic", signal }),
-        3500,
+        tavilySearch(query, { maxResults: n, depth: "advanced", signal }),
+        10000,
         []
       );
       const urls = results.map((r) => r.url);
-      const fresh = urls.filter((u) => !crawlCache.has(u));
-      const pages = await withTimeout(crawlMany(fresh, 4, signal), 3500, []);
-      pages.forEach((p) => crawlCache.set(p.url, p));
+
+      // Seed crawlCache with Tavily content immediately so we always have rich text
+      for (const r of results) {
+        if (!crawlCache.has(r.url) && r.content) {
+          crawlCache.set(r.url, {
+            url: r.url,
+            canonicalUrl: r.url,
+            finalUrl: r.url,
+            title: r.title || r.url,
+            text: r.content,
+            wordCount: r.content.split(/\s+/).length,
+            jsonLd: [],
+            meta: {},
+            images: [],
+            fetchedAt: new Date().toISOString(),
+            status: 200,
+            ok: true,
+          });
+        }
+      }
+
+      const fresh = urls.filter((u) => !crawlCache.has(u) || (crawlCache.get(u)?.wordCount ?? 0) < 100);
+      const pages = await withTimeout(crawlMany(fresh, 4, signal), 8000, []);
+      pages.forEach((p) => {
+        if (p.ok && p.text && p.wordCount > 50) {
+          crawlCache.set(p.url, p);
+        }
+      });
+
       const all = urls.map((u) => crawlCache.get(u)).filter(Boolean) as CrawledPage[];
       for (const p of all) {
         sourceIdFor(p.finalUrl || p.url);
-        if ((!p.text || p.wordCount < 40) && !p.ok) {
-          const tav = results.find((r) => r.url === p.url);
-          if (tav?.content) {
-            p.text = tav.content.slice(0, 4000);
-            p.wordCount = p.text.split(/\s+/).length;
-            p.ok = true;
-          }
-        }
       }
       return all;
     } catch {
@@ -150,50 +168,59 @@ export async function investigate(
     ? `campsites wild camping mountain huts homestays in ${stayLocus}`
     : `best clean hotels in ${stayLocus} reviews price`;
 
-  // ---- PHASE 1: Consolidated High-Speed Multi-Track Discovery ----
+  // ---- PHASE 1: Comprehensive Multi-Track Discovery ----
   emit({ agent: "scout", phase: "working", status: `Mapping ${dest}` });
   emit({ agent: "pillow", phase: "working", status: "Comparing stays" });
   emit({ agent: "foodie", phase: "working", status: "Scouting food" });
   emit({ agent: "gatekeeper", phase: "working", status: "Checking permits & documents" });
 
-  const [guidePages, stayPages, localPages] = await Promise.all([
+  const [guidePages, stayPages, foodPages, activityPages] = await Promise.all([
     discoverAndCrawl(`${dest} travel guide top attractions places to visit itinerary`, 6),
-    discoverAndCrawl(hotelQuery, 5),
-    discoverAndCrawl(`best food restaurants permits entry things to do in ${dest}`, 5),
+    discoverAndCrawl(hotelQuery, 6),
+    discoverAndCrawl(`${dest} best local restaurants authentic food specialties cafes dining`, 6),
+    discoverAndCrawl(`${dest} top things to do adventures tours outdoor activities permits entry fee ticket price`, 6),
   ]);
 
   const overviewPages = guidePages.slice(0, 3);
   const placePages = guidePages;
   const hotelPages = stayPages;
-  const foodPages = localPages;
-  const permitPages = localPages;
-  const experiencePages = [...guidePages.slice(2), ...localPages];
+  const localPages = [...foodPages, ...activityPages];
+  const permitPages = [...activityPages, ...guidePages];
+  const experiencePages = [...activityPages, ...guidePages];
 
-  // ---- PHASE 2: Parallel High-Speed Extractions with Groq LLM ----
-  const [overview, extractedPlaces0, extractedHotels, extractedFood, extractedPermits, extractedExperiences] = await Promise.all([
-    withTimeout(extractOverview(dest, overviewPages, signal).catch(() => ({} as Awaited<ReturnType<typeof extractOverview>>)), 5000, {} as any),
-    withTimeout(extractPlaces(dest, [...overviewPages, ...placePages], signal).catch(() => []), 5000, []),
-    withTimeout(extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []), 5000, []),
-    withTimeout(extractFood(dest, foodPages, signal).catch(() => []), 5000, []),
-    withTimeout(extractPermits(dest, permitPages, signal).catch(() => []), 5000, []),
-    withTimeout(extractExperiences(dest, [...experiencePages, ...placePages], signal).catch(() => []), 5000, []),
+  // ---- PHASE 2: Deep Grounded Extractions with Groq LLM ----
+  const [overview, extractedPlaces0, extractedHotels0, extractedFood0, extractedPermits, extractedExperiences0] = await Promise.all([
+    withTimeout(extractOverview(dest, overviewPages, signal).catch(() => ({} as Awaited<ReturnType<typeof extractOverview>>)), 10000, {} as any),
+    withTimeout(extractPlaces(dest, [...overviewPages, ...placePages], signal).catch(() => []), 10000, []),
+    withTimeout(extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []), 10000, []),
+    withTimeout(extractFood(dest, foodPages, signal).catch(() => []), 10000, []),
+    withTimeout(extractPermits(dest, permitPages, signal).catch(() => []), 10000, []),
+    withTimeout(extractExperiences(dest, experiencePages, signal).catch(() => []), 10000, []),
   ]);
 
   let extractedPlaces = extractedPlaces0;
   if (extractedPlaces.length === 0) {
-    extractedPlaces = await withTimeout(extractPlaces(dest, placePages, signal).catch(() => []), 4000, []);
+    extractedPlaces = await withTimeout(extractPlaces(dest, placePages, signal).catch(() => []), 6000, []);
   }
   emit({ agent: "scout", phase: "done", status: `Mapped ${dest}`, metric: `${Math.max(4, extractedPlaces.length)} places` });
 
-  const extractedHotelsFinal = extractedHotels;
+  let extractedHotels = extractedHotels0;
+  if (extractedHotels.length === 0 && stayLocus !== dest) {
+    // If destination is a remote pass/landmark, fetch base city/valley hotels
+    const baseStayPages = await discoverAndCrawl(`best hotels resorts in ${dest} ${overview.region || ""}`, 4);
+    extractedHotels = await withTimeout(extractHotels(dest, intent.priorities, baseStayPages, signal).catch(() => []), 6000, []);
+  }
+
+  let extractedFood = extractedFood0;
+  let extractedExperiences = extractedExperiences0;
   const hotelPagesFinal = hotelPages;
   const allPageSourceIds = uniq([...overviewPages, ...placePages].map((p) => sourceIdFor(p.finalUrl || p.url)));
 
   // Fetch real verified subject-matched photos per place
   emit({ agent: "lens", phase: "working", status: "Gathering verified landmark photography" });
   const [rawWikiPlaceImages, heroImgs] = await Promise.all([
-    mapLimited(extractedPlaces, 4, (p) => withTimeout(scrapeLiveSubjectImages(p.name, dest, "attraction", 3, signal).catch(() => []), 4000, [])),
-    withTimeout(scrapeLiveSubjectImages(`${dest} landscape scenery landmark`, dest, "landscape", 2, signal).catch(() => []), 3500, []),
+    mapLimited(extractedPlaces, 4, (p) => withTimeout(scrapeLiveSubjectImages(p.name, dest, "attraction", 3, signal).catch(() => []), 6000, [])),
+    withTimeout(scrapeLiveSubjectImages(`${dest} landscape scenery landmark`, dest, "landscape", 2, signal).catch(() => []), 5000, []),
   ]);
   const usedImageUrls = new Set<string>();
   const wikiPlaceImages = rawWikiPlaceImages.map((arr) => {
@@ -257,7 +284,7 @@ export async function investigate(
   emit({ agent: "review_detective", phase: "working", status: "Reading verified traveller reviews" });
   const reviews: Record<string, ReviewIntel> = {};
   const [reviewIntels, rawHotelWebPhotos] = await Promise.all([
-    mapLimited(extractedHotelsFinal, 3, async (h, i) => {
+    mapLimited(extractedHotels, 3, async (h, i) => {
       try {
         const ri = await withTimeout(extractReviewIntel(h.name, hotelPagesFinal, signal), 3000, {} as any);
         return {
@@ -282,9 +309,9 @@ export async function investigate(
         } as ReviewIntel;
       }
     }),
-    mapLimited(extractedHotelsFinal, 3, async (h) => {
+    mapLimited(extractedHotels, 3, async (h) => {
       try {
-        const live = await withTimeout(scrapeLiveSubjectImages(h.name, dest, "room", 3, signal), 2000, []);
+        const live = await withTimeout(scrapeLiveSubjectImages(h.name, dest, "room", 3, signal), 4000, []);
         return live.map((im) => im.url);
       } catch {
         return [];
@@ -292,7 +319,7 @@ export async function investigate(
     }),
   ]);
 
-  const hotels: HotelOption[] = extractedHotelsFinal.map((h, i) => {
+  const hotels: HotelOption[] = extractedHotels.map((h, i) => {
     const riId = `ri_${i}`;
     const intel = reviewIntels[i];
     reviews[riId] = intel;
@@ -373,7 +400,7 @@ export async function investigate(
   emit({ agent: "foodie", phase: "working", status: "Scouting restaurants & culinary specialties" });
   const rawFoodPhotos = await mapLimited(extractedFood, 3, async (f) => {
     try {
-      const live = await withTimeout(scrapeLiveSubjectImages(`${f.name} food`, dest, "food", 2, signal), 2000, []);
+      const live = await withTimeout(scrapeLiveSubjectImages(`${f.name} food`, dest, "food", 2, signal), 5000, []);
       if (live.length > 0) return live;
     } catch {
       // fallback
@@ -397,7 +424,7 @@ export async function investigate(
   const expSourceIds = uniq(experiencePages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 3);
   const expImages = await mapLimited(extractedExperiences, 4, async (e) => {
     try {
-      const live = await withTimeout(scrapeLiveSubjectImages(e.name, dest, "attraction", 2, signal), 2000, []);
+      const live = await withTimeout(scrapeLiveSubjectImages(e.name, dest, "attraction", 2, signal), 5000, []);
       if (live.length > 0) return live;
     } catch {
       // fallback

@@ -13,7 +13,7 @@ import { ENV, CAP } from "./env";
 // 5. DuckDuckGo Live Images (High-coverage web search)
 // ============================================================================
 
-const UA = "Travelism/2.0 (travel research agent; contact travelism.app)";
+const UA = "TravelismApp/2.1 (https://travelism.app; support@travelism.app) Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 export function isBadImage(url: string): boolean {
   if (!url) return true;

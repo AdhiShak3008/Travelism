@@ -18,7 +18,14 @@ export function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
-    const stored = (typeof window !== "undefined" && localStorage.getItem("travelism-theme")) as Theme | null;
+    let stored: Theme | null = null;
+    try {
+      if (typeof window !== "undefined") {
+        stored = localStorage.getItem("travelism-theme") as Theme | null;
+      }
+    } catch {
+      // Storage access blocked by sandbox or browser security policies
+    }
     const initial: Theme = stored ?? (document.documentElement.classList.contains("dark") ? "dark" : "light");
     setTheme(initial);
   }, []);
