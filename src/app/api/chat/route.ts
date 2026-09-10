@@ -13,6 +13,8 @@ const ChatResponseSchema = z.object({
       kind: z.enum([
         "upgrade_hotel",
         "cheaper_hotel",
+        "search_new_hotels",
+        "search_new_places",
         "set_stay_mode",
         "remove_all_hotels",
         "set_duration",
@@ -134,7 +136,18 @@ ${itinSummary || "Standard paced schedule"}
 
 Your capabilities:
 1. Provide rich, charismatic travel recommendations with markdown tables, food guides, insider neighborhood secrets, weather tips, and packing essentials.
-2. Direct Itinerary Actions:
+2. RESPONSE FORMATTING GUIDELINES:
+   - Use clean Markdown with headers (### for main sections), clean bullet points (- **Item Name**: Description), and short digestible paragraphs.
+   - For tabular data (visas, day-by-day comparisons, budget breakdowns, costs, packing lists), ALWAYS format as clean GitHub Flavored Markdown tables with line breaks between each row:
+     | Country | Visa Required | Type | Processing Time | Approx Cost (INR) | Notes |
+     |---|---|---|---|---|---|
+     | Poland | Yes – Schengen | Short-stay (C) | 7-15 days | ₹7,000 | Apply via VFS / Consulate |
+   - Never mash multiple rows onto a single line without line breaks.
+   - For step-by-step checklists, use bold title bullets: "- **Completed Application**: Online biometric form."
+   - Use callouts for insider tips: "> 💡 **Pro-Tip**: Book VFS appointment 4 weeks in advance."
+   - For FAQs, use: "- **Q: Can I use Schengen visa for Balkan countries?** Yes, a valid multi-entry Schengen visa..."
+   - Always keep the tone warm, luxurious, proactive, and visually stunning.
+3. Direct Itinerary Actions:
    - When user asks to customize or clear a day (e.g. "make day 3 a rest / beach day", "I don't want to go out on day 4", "make day 2 a luxury spa and culinary day"):
      Return action: "replace_day_stops" with dayNum, dayTitle, and a list of realistic stops (e.g. kind="rest"|"meal"|"visit"|"hotel", label, start, end, note).
    - When user asks to add an activity or event (e.g. "add Haulover Sandbar Party to activities", "add yacht sunset cruise", "schedule deep sea diving"):
@@ -145,6 +158,10 @@ Your capabilities:
      Return action: "remove_day_stop" with dayNum and value (the name/query to remove).
    - When user asks to change focus of a day (e.g. "make day 5 focus on culinary"):
      Return action: "set_day_focus" with dayNum and value: "culinary"|"staycation"|"wellness"|"beach"|"sightseeing".
+   - When user asks to search for specific hotels or accommodation types (e.g. "find a ryokan with an onsen in Kyoto", "search for luxury 5-star mountain resort", "find boutique heritage hotels", "look for hotels with infinity pool"):
+     Return action: "search_new_hotels" with value: "the specific hotel query / style".
+   - When user asks to search for new sightseeing places (e.g. "find hidden viewpoints", "search for temples"):
+     Return action: "search_new_places" with value: "the place query".
    - When user asks to switch to wild camping, remove hotels, or change stay style (e.g. "switch to wild camping", "remove all hotels", "we don't need a hotel", "we are bikepacking with tents"):
      Return action: "set_stay_mode" with value: "wild_camping"|"none"|"hotels"|"homestays"|"campsites_refugios" and deltaLabel (e.g. 'Switched to Wild Camping (₹0 lodging)').
    - When user asks to adjust hotel tier, trip duration, group size, or pace:
@@ -153,7 +170,7 @@ Your capabilities:
 
 Always return valid JSON:
 {
-  "reply": "Rich, formatted markdown answer with emojis, bullet points, recommendations...",
+  "reply": "Rich, formatted markdown answer with emojis, bullet points, tables, recommendations...",
   "action": {
     "kind": "...",
     "value": ...,

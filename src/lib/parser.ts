@@ -25,17 +25,45 @@ interface Rule {
   /** effects merged into the signal */
   effects: (m: RegExpMatchArray, text: string) => Record<string, string | number | boolean>;
   /** interpretation shown back to the user */
-  say: (m: RegExpMatchArray) => string;
+  say: (m: RegExpMatchArray, text: string) => string;
   /** mood nudges (key -> delta) */
   mood?: Partial<Record<MoodKey, number>>;
 }
 
-const rupee = (s: string): number | undefined => {
-  const m = s.replace(/,/g, "").match(/(?:₹|rs\.?|inr)\s*([\d]+(?:\.\d+)?)\s*(k|thousand)?/i);
-  if (!m) return undefined;
-  let n = parseFloat(m[1]);
-  if (m[2]) n *= 1000;
-  return Math.round(n);
+const rupee = (s?: string): number | undefined => {
+  if (!s || typeof s !== "string") return undefined;
+  const clean = s.replace(/,/g, "").trim();
+  if (!clean) return undefined;
+  
+  // 1. Currency prefix or suffix: ₹1.5k, 1.5k rs, 1500 rupees, 1.5k inr, 1.5k/night
+  const m1 = clean.match(/(?:(?:₹|rs\.?|inr)\s*([\d]+(?:\.\d+)?)\s*(k|thousand)?)|(?:([\d]+(?:\.\d+)?)\s*(k|thousand)?\s*(?:₹|rs\.?|inr|rupees|bucks|per\s*night|\/night))/i);
+  if (m1) {
+    const rawNum = m1[1] || m1[3];
+    const unit = m1[2] || m1[4];
+    if (rawNum) {
+      let n = parseFloat(rawNum);
+      if (unit && /k/i.test(unit)) n *= 1000;
+      else if (unit && /thousand/i.test(unit)) n *= 1000;
+      return Math.round(n);
+    }
+  }
+
+  // 2. Budget numbers with 'k' or 'thousand': "1.5k", "2k", "3.5k"
+  const m2 = clean.match(/\b([\d]+(?:\.\d+)?)\s*(k|thousand)\b/i);
+  if (m2) {
+    let n = parseFloat(m2[1]);
+    if (/k/i.test(m2[2])) n *= 1000;
+    else if (/thousand/i.test(m2[2])) n *= 1000;
+    return Math.round(n);
+  }
+
+  // 3. Plain standalone amount in budget context: "under 2000", "max 1500", "budget 3000", "around 1500"
+  const m3 = clean.match(/(?:under|below|max|budget|within|around|spend|cap|night|hotel|hotels)\s*(\d{3,6})\b/i);
+  if (m3) {
+    return Math.round(parseFloat(m3[1]));
+  }
+
+  return undefined;
 };
 
 const RULES: Rule[] = [
@@ -56,13 +84,20 @@ const RULES: Rule[] = [
     say: () => "Cleanliness matters to you. We'll weight it heavily in hotel selection.",
     mood: { comfort: 1 },
   },
-  // --- Luxury / not luxury ---
+  // --- Luxury / Avoid expensive hotels / Budget stays ---
   {
-    test: /(don'?t need luxury|no luxury|not luxury|nothing fancy|no frills)/i,
-    category: "preference",
+    test: /(?:don'?t\s*want|no|avoid|hate|not\s*into|skip|without|no\s*need\s*for)\s*(?:expensive|5\s*star|five\s*star|luxury|overpriced|costly|fancy|resort|high\s*end)\s*(?:hotels?|stays?|rooms?|resorts?|accommodation)?|(?:cheap|affordable|budget|economical|value|reasonable)\s*(?:hotels?|stays?|rooms?|lodging|accommodation)|(?:don'?t\s*need\s*luxury|no\s*luxury|not\s*luxury|nothing\s*fancy|no\s*frills|no\s*5\s*star|not\s*expensive)/i,
+    category: "budget",
     agents: ["pillow", "penny_pincher"],
-    effects: () => ({ deprioritize_luxury: true, deprioritize: "spa,gym,luxury_amenities" }),
-    say: () => "No need for luxury. We'll deprioritize spa/gym/premium amenities.",
+    effects: () => ({
+      deprioritize_luxury: true,
+      budget_tier: "economical",
+      hotel_tier: "economical",
+      avoid_expensive_hotels: true,
+      deprioritize: "luxury,5_star,expensive_resorts",
+    }),
+    say: () => "Understood: avoiding expensive 5-star & luxury hotels. Pillow and Penny Pincher will prioritize high-value, clean boutique stays.",
+    mood: { comfort: -2 },
   },
   // --- Budget flights ---
   {
@@ -190,20 +225,25 @@ const RULES: Rule[] = [
     effects: () => ({ find_alternatives: true }),
     say: () => "We'll surface alternative options similar to this.",
   },
-  // --- Make cheaper ---
+  // --- Make cheaper / Specific budget target ---
   {
-    test: /(cheaper|reduce cost|save money|lower.{0,10}(cost|price|budget)|under\s*(?:₹|rs|inr))/i,
+    test: /(?:cheaper|reduce\s*cost|save\s*money|lower.{0,10}(?:cost|price|budget)|under|below|max|around|within|budget|\d+\.?\d*\s*k|\d+\s*(?:rs|rupees|inr|bucks)|₹\s*\d+)/i,
     category: "budget",
-    agents: ["penny_pincher", "bean_counter"],
+    agents: ["penny_pincher", "pillow", "bean_counter"],
     effects: (_, text) => {
       const t = rupee(text);
-      const out: Record<string, string | number | boolean> = t ? { target_budget: t } : { reduce_cost: true };
+      const out: Record<string, string | number | boolean> = t
+        ? { target_budget: t, target_hotel_price: t, budget_tier: "economical", hotel_tier: "economical", avoid_expensive_hotels: true, deprioritize_luxury: true }
+        : { reduce_cost: true, budget_tier: "economical", avoid_expensive_hotels: true };
       return out;
     },
-    say: (m) => {
-      const t = rupee(m.input ?? "");
-      return t ? `Targeting a budget under ₹${t.toLocaleString("en-IN")}. Penny Pincher will optimize.` : "Penny Pincher will look for savings.";
+    say: (_, text) => {
+      const t = rupee(text);
+      return t
+        ? `Targeting ~₹${t.toLocaleString("en-IN")}/night or under. Penny Pincher and Pillow will prioritize affordable stays matching your exact budget.`
+        : "Penny Pincher and Pillow will prioritize affordable stays and savings.";
     },
+    mood: { comfort: -2 },
   },
   // --- Make nicer ---
   {
@@ -243,7 +283,7 @@ export function parseComment(
       scope,
       entityId,
       text: clean,
-      interpretation: rule.say(m),
+      interpretation: rule.say(m, clean),
       affectedAgents: rule.agents,
       effects: rule.effects(m, clean),
       createdAt: new Date().toISOString(),
@@ -299,20 +339,34 @@ export function derivePreferences(
 
   for (const s of signals) {
     const e = s.effects;
-    if (e.flight_tier === "economical" || e.food_tier === "budget") p.budgetTier = "economical";
+    if (e.flight_tier === "economical" || e.food_tier === "budget" || e.hotel_tier === "economical" || e.budget_tier === "economical" || e.avoid_expensive_hotels) {
+      p.budgetTier = "economical";
+    }
+    if (typeof e.target_hotel_price === "number") {
+      p.targetHotelPrice = e.target_hotel_price;
+      if (e.target_hotel_price < 8000) p.budgetTier = "economical";
+    }
+    if (typeof e.target_budget === "number") {
+      p.budgetTotal = e.target_budget;
+      if (e.target_budget <= 25000) {
+        p.targetHotelPrice = e.target_budget <= 5000 ? e.target_budget : Math.round(e.target_budget / 4);
+        p.budgetTier = "economical";
+      }
+    }
     if (e.upgrade_comfort) p.budgetTier = "premium";
     if (e.pace) p.pace = e.pace as Preferences["pace"];
     if (e.avoid_early_flights) p.avoidEarlyFlights = true;
     if (e.minimize_hotel_changes) p.minimizeHotelChanges = true;
     if (e.hotel_change_allowed) p.minimizeHotelChanges = false;
     if (typeof e.threshold_savings === "number") p.hotelChangeSavingsThreshold = e.threshold_savings;
-    if (typeof e.target_budget === "number") p.budgetTotal = e.target_budget;
     if (e.priority_bathroom_cleanliness && !p.priorities.includes("bathroom_cleanliness"))
       p.priorities.push("bathroom_cleanliness");
     if (e.priority_cleanliness && !p.priorities.includes("cleanliness")) p.priorities.push("cleanliness");
     if (e.priority_scenery && !p.priorities.includes("scenery")) p.priorities.push("scenery");
     if (e.priority_food && !p.priorities.includes("food")) p.priorities.push("food");
-    if (e.deprioritize_luxury && !p.deprioritized.includes("luxury")) p.deprioritized.push("luxury");
+    if ((e.deprioritize_luxury || e.avoid_expensive_hotels) && !p.deprioritized.includes("luxury")) {
+      p.deprioritized.push("luxury");
+    }
     if (e.exclude_nightlife && !p.deprioritized.includes("nightlife")) p.deprioritized.push("nightlife");
     if (e.accessibility === "reduced_mobility" && !p.accessibilityNeeds.includes("reduced_mobility"))
       p.accessibilityNeeds.push("reduced_mobility");

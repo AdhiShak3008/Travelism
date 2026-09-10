@@ -121,33 +121,119 @@ async function scrapeGooglePlacesPhotos(query: string, limit = 3, signal?: Abort
   }
 }
 
+function isPersonArticle(title: string, desc?: string): boolean {
+  const s = `${title || ""} ${desc || ""}`.toLowerCase();
+  return /\b(born\s*\d{4}|\(\d{4}[–-]\d{4}\)|\b\d{4}[–-]\d{4}\b|prince|princess|duke|duchess|monarch|actor|actress|politician|minister|musician|singer|footballer|cricketer|biography)\b/i.test(s);
+}
+
 /**
- * 1. Wikipedia PageImages query
+ * 1. Wikipedia PageImages query:
+ * Uses 3-stage precision matching:
+ * 1. Exact canonical title lookup with auto-redirects (e.g. "Agra Fort", "Taj Mahal", "Arthur's Seat")
+ * 2. Opensearch prefix title matching (strict title match, not fuzzy text body rank)
+ * 3. Targeted search generator with biographical person filtering
  */
 async function scrapeWikipediaPageImage(query: string, signal?: AbortSignal): Promise<string | null> {
   const candidates = cleanQueryTerms(query);
+  
+  // Stage 1: Exact Title Lookup with Redirects
   for (const q of candidates) {
     const u = new URL("https://en.wikipedia.org/w/api.php");
     u.searchParams.set("action", "query");
     u.searchParams.set("format", "json");
-    u.searchParams.set("prop", "pageimages");
+    u.searchParams.set("titles", q);
+    u.searchParams.set("redirects", "1");
+    u.searchParams.set("prop", "pageimages|description");
+    u.searchParams.set("piprop", "original|thumbnail");
+    u.searchParams.set("pithumbsize", "1200");
+    u.searchParams.set("origin", "*");
+
+    try {
+      const res = await fetch(u.toString(), { headers: { "User-Agent": UA }, signal });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        query?: { pages?: Record<string, { pageid?: number; title?: string; description?: string; original?: { source?: string }; thumbnail?: { source?: string } }> };
+      };
+      const pages = data.query?.pages ? Object.values(data.query.pages) : [];
+      const valid = pages.find((p) => (p.pageid ?? 0) > 0);
+      if (valid && !isPersonArticle(valid.title || "", valid.description)) {
+        const url = valid.original?.source ?? valid.thumbnail?.source ?? null;
+        if (url && !isBadImage(url)) return url;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Stage 2: Wikipedia Opensearch (Strict Title Prefix Matching)
+  for (const q of candidates) {
+    try {
+      const uOpen = new URL("https://en.wikipedia.org/w/api.php");
+      uOpen.searchParams.set("action", "opensearch");
+      uOpen.searchParams.set("format", "json");
+      uOpen.searchParams.set("search", q);
+      uOpen.searchParams.set("limit", "3");
+      uOpen.searchParams.set("namespace", "0");
+      uOpen.searchParams.set("origin", "*");
+
+      const resOpen = await fetch(uOpen.toString(), { headers: { "User-Agent": UA }, signal });
+      if (!resOpen.ok) continue;
+      const dataOpen = (await resOpen.json()) as [string, string[]];
+      const matchedTitles = dataOpen[1] || [];
+
+      for (const title of matchedTitles) {
+        const u = new URL("https://en.wikipedia.org/w/api.php");
+        u.searchParams.set("action", "query");
+        u.searchParams.set("format", "json");
+        u.searchParams.set("titles", title);
+        u.searchParams.set("redirects", "1");
+        u.searchParams.set("prop", "pageimages|description");
+        u.searchParams.set("piprop", "original|thumbnail");
+        u.searchParams.set("pithumbsize", "1200");
+        u.searchParams.set("origin", "*");
+
+        const res = await fetch(u.toString(), { headers: { "User-Agent": UA }, signal });
+        if (!res.ok) continue;
+        const data = (await res.json()) as {
+          query?: { pages?: Record<string, { pageid?: number; title?: string; description?: string; original?: { source?: string }; thumbnail?: { source?: string } }> };
+        };
+        const pages = data.query?.pages ? Object.values(data.query.pages) : [];
+        const valid = pages.find((p) => (p.pageid ?? 0) > 0);
+        if (valid && !isPersonArticle(valid.title || "", valid.description)) {
+          const url = valid.original?.source ?? valid.thumbnail?.source ?? null;
+          if (url && !isBadImage(url)) return url;
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Stage 3: Targeted Search Generator
+  for (const q of candidates) {
+    const u = new URL("https://en.wikipedia.org/w/api.php");
+    u.searchParams.set("action", "query");
+    u.searchParams.set("format", "json");
+    u.searchParams.set("prop", "pageimages|description");
     u.searchParams.set("piprop", "original|thumbnail");
     u.searchParams.set("pithumbsize", "1200");
     u.searchParams.set("generator", "search");
     u.searchParams.set("gsrsearch", q);
-    u.searchParams.set("gsrlimit", "1");
+    u.searchParams.set("gsrlimit", "3");
     u.searchParams.set("origin", "*");
     try {
       const res = await fetch(u.toString(), { headers: { "User-Agent": UA }, signal });
       if (!res.ok) continue;
       const data = (await res.json()) as {
-        query?: { pages?: Record<string, { original?: { source?: string }; thumbnail?: { source?: string } }> };
+        query?: { pages?: Record<string, { title?: string; description?: string; original?: { source?: string }; thumbnail?: { source?: string } }> };
       };
       const pages = data.query?.pages;
       if (!pages) continue;
-      const first = Object.values(pages)[0];
-      const url = first?.original?.source ?? first?.thumbnail?.source ?? null;
-      if (url && !isBadImage(url)) return url;
+      for (const p of Object.values(pages)) {
+        if (isPersonArticle(p.title || "", p.description)) continue;
+        const url = p.original?.source ?? p.thumbnail?.source ?? null;
+        if (url && !isBadImage(url)) return url;
+      }
     } catch {
       // try next candidate
     }
@@ -260,11 +346,19 @@ export async function scrapeLiveSubjectImages(
   const strippedSubject = stripActivityNoise(cleanSubject);
   const destClean = destination.trim();
 
+  // Extract individual hubs if multi-destination query is passed
+  const hubs = destClean
+    .split(/\s*(?:,|&|\band\b|\bto\b|\+|\/)\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const matchingHub = hubs.find((h) => new RegExp(`\\b${h}\\b`, "i").test(cleanSubject)) || hubs[0] || destClean;
+
   const searchTerms = Array.from(
     new Set([
+      cleanSubject, // Exact attraction title (best for Wikipedia PageImages)
+      `${cleanSubject} ${matchingHub}`.trim(),
       `${cleanSubject} ${destClean}`.trim(),
-      `${strippedSubject} ${destClean}`.trim(),
-      cleanSubject,
+      `${strippedSubject} ${matchingHub}`.trim(),
       strippedSubject,
     ])
   ).filter((s) => s.length > 2);
@@ -287,6 +381,8 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
+  const isExperienceOrTour = /\b(tour|cruise|walk|walking|excursion|experience|class|tasting|safari|crawl|ticket|tickets|pass|adventure|hike|rental)\b/i.test(subject);
+
   // 0. Google Custom Search & Google Places API (when configured)
   try {
     const [googleSearchUrls, googlePlaceUrls] = await Promise.all([
@@ -301,7 +397,21 @@ export async function scrapeLiveSubjectImages(
     // continue
   }
 
-  // 1 & 2. Wikipedia PageImages & Wikimedia Commons in parallel
+  // If this is a commercial tour/activity, query DuckDuckGo & Tavily FIRST to get genuine tour photos
+  if (isExperienceOrTour && results.length < limit) {
+    try {
+      const [ddgUrls, tavilyUrls] = await Promise.all([
+        scrapeDuckDuckGoImages(`${cleanSubject} ${destClean} travel`, limit - results.length, signal).catch(() => []),
+        tavilySearchImages(`${cleanSubject} ${destClean} tour photo`, limit * 2, signal).catch(() => []),
+      ]);
+      addUrls(ddgUrls, "Web Search");
+      addUrls(tavilyUrls, "Web Verified");
+    } catch {
+      // continue
+    }
+  }
+
+  // 1 & 2. Wikipedia PageImages & Wikimedia Commons
   if (results.length < limit) {
     try {
       const [wikiResults, commonsResults] = await Promise.all([
@@ -315,20 +425,14 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
-  // 3. Tavily Live Web Search Images (fast fallback)
+  // 3 & 4. Tavily & DuckDuckGo Fallback for remaining slots
   if (results.length < limit) {
     try {
-      const tavilyUrls = await tavilySearchImages(`${cleanSubject} ${destClean} photo`, limit * 2, signal).catch(() => []);
+      const [tavilyUrls, ddgUrls] = await Promise.all([
+        tavilySearchImages(`${cleanSubject} ${destClean} photo`, limit * 2, signal).catch(() => []),
+        scrapeDuckDuckGoImages(`${cleanSubject} ${destClean}`, limit - results.length, signal).catch(() => []),
+      ]);
       addUrls(tavilyUrls, "Web Verified");
-    } catch {
-      // ignore
-    }
-  }
-
-  // 4. DuckDuckGo Live Images
-  if (results.length < limit) {
-    try {
-      const ddgUrls = await scrapeDuckDuckGoImages(`${cleanSubject} ${destClean}`, limit - results.length, signal).catch(() => []);
       addUrls(ddgUrls, "Web Search");
     } catch {
       // ignore

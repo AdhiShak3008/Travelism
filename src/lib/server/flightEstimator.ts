@@ -117,11 +117,36 @@ const COORDS: Record<string, Coord> = {
   cdg: { lat: 49.01, lng: 2.55 },
   rome: { lat: 41.8, lng: 12.24 },
   milan: { lat: 45.63, lng: 8.72 },
+  mxp: { lat: 45.63, lng: 8.72 },
+  "lake como": { lat: 45.98, lng: 9.26 },
+  como: { lat: 45.81, lng: 9.08 },
+  bellagio: { lat: 45.98, lng: 9.26 },
+  mallorca: { lat: 39.55, lng: 2.73 },
+  "palma de mallorca": { lat: 39.55, lng: 2.73 },
+  palma: { lat: 39.55, lng: 2.73 },
+  pmi: { lat: 39.55, lng: 2.73 },
+  ibiza: { lat: 38.87, lng: 1.37 },
+  menorca: { lat: 39.86, lng: 4.21 },
+  lucerne: { lat: 47.05, lng: 8.3 },
+  zermatt: { lat: 45.97, lng: 7.74 },
+  interlaken: { lat: 46.68, lng: 7.86 },
+  amalfi: { lat: 40.63, lng: 14.6 },
+  positano: { lat: 40.62, lng: 14.48 },
+  capri: { lat: 40.55, lng: 14.24 },
+  nice: { lat: 43.66, lng: 7.21 },
+  cannes: { lat: 43.55, lng: 7.01 },
+  monaco: { lat: 43.73, lng: 7.42 },
   venice: { lat: 45.5, lng: 12.35 },
   florence: { lat: 43.81, lng: 11.2 },
   madrid: { lat: 40.49, lng: -3.56 },
   barcelona: { lat: 41.3, lng: 2.08 },
+  valencia: { lat: 39.48, lng: -0.48 },
+  seville: { lat: 37.41, lng: -5.89 },
+  granada: { lat: 37.18, lng: -3.77 },
   lisbon: { lat: 38.77, lng: -9.13 },
+  porto: { lat: 41.24, lng: -8.68 },
+  algarve: { lat: 37.01, lng: -7.96 },
+  faro: { lat: 37.01, lng: -7.96 },
   amsterdam: { lat: 52.31, lng: 4.76 },
   schiphol: { lat: 52.31, lng: 4.76 },
   frankfurt: { lat: 50.04, lng: 8.56 },
@@ -135,6 +160,9 @@ const COORDS: Record<string, Coord> = {
   budapest: { lat: 47.44, lng: 19.26 },
   athens: { lat: 37.94, lng: 23.94 },
   santorini: { lat: 36.4, lng: 25.43 },
+  mykonos: { lat: 37.43, lng: 25.34 },
+  crete: { lat: 35.34, lng: 25.18 },
+  rhodes: { lat: 36.4, lng: 28.08 },
   greece: { lat: 37.94, lng: 23.94 },
   istanbul: { lat: 41.28, lng: 28.73 },
   turkey: { lat: 41.28, lng: 28.73 },
@@ -259,18 +287,23 @@ function normalizeCity(raw: string): string {
 
 export function lookupCoord(raw: string): { coord: Coord; known: boolean } {
   if (!raw || !raw.trim()) return { coord: INDIA_CENTROID, known: false };
-  const key = normalizeCity(raw);
-  if (COORDS[key]) return { coord: COORDS[key], known: true };
+  const firstSegment = raw.split(/[→\->&/]/)[0].trim();
+  const candidates = Array.from(new Set([raw, firstSegment])).filter(Boolean);
 
-  // Try substring / first 2 words
-  const words = key.split(/\s+/);
-  for (let i = words.length; i >= 1; i--) {
-    const sub = words.slice(0, i).join(" ");
-    if (COORDS[sub]) return { coord: COORDS[sub], known: true };
-  }
-  // Try matching any entry containing the key
-  for (const [k, v] of Object.entries(COORDS)) {
-    if (k.includes(key) || key.includes(k)) return { coord: v, known: true };
+  for (const cand of candidates) {
+    const key = normalizeCity(cand);
+    if (COORDS[key]) return { coord: COORDS[key], known: true };
+
+    // Try substring / first 2 words
+    const words = key.split(/\s+/);
+    for (let i = words.length; i >= 1; i--) {
+      const sub = words.slice(0, i).join(" ");
+      if (COORDS[sub]) return { coord: COORDS[sub], known: true };
+    }
+    // Try matching any entry containing the key
+    for (const [k, v] of Object.entries(COORDS)) {
+      if (k.includes(key) || (key.length > 3 && key.includes(k))) return { coord: v, known: true };
+    }
   }
 
   // Check regional fallback
@@ -398,44 +431,57 @@ interface AirlineSpec {
 function getAirlinesForSector(domestic: boolean, distanceKm: number): AirlineSpec[] {
   if (domestic) {
     return [
-      { name: "IndiGo", code: "6E", cabin: "Economy", onTime: 86, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.95 },
-      { name: "Air India", code: "AI", cabin: "Economy", onTime: 80, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 1.05 },
-      { name: "Akasa Air", code: "QP", cabin: "Economy", onTime: 84, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.9 },
-      { name: "SpiceJet", code: "SG", cabin: "Economy", onTime: 75, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.88 },
+      { name: "IndiGo", code: "6E", cabin: "Economy", onTime: 87, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.95 },
+      { name: "Air India", code: "AI", cabin: "Economy", onTime: 82, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 1.05 },
+      { name: "Akasa Air", code: "QP", cabin: "Economy", onTime: 86, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.90 },
+      { name: "Vistara", code: "UK", cabin: "Premium Economy", onTime: 89, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 1.18 },
+      { name: "SpiceJet", code: "SG", cabin: "Economy", onTime: 76, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.88 },
+      { name: "AIX Connect", code: "I5", cabin: "Economy", onTime: 81, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.89 },
+      { name: "Air India Express", code: "IX", cabin: "Economy", onTime: 83, baggage: "15 kg check-in · 7 kg cabin", fareMultiplier: 0.91 },
     ];
   }
 
   if (distanceKm > 9000) {
     // Long-haul / USA / Americas / Australia
     return [
-      { name: "Emirates", code: "EK", cabin: "Economy", onTime: 88, baggage: "2 x 23 kg check-in · 7 kg cabin", fareMultiplier: 1.08 },
-      { name: "Qatar Airways", code: "QR", cabin: "Economy", onTime: 89, baggage: "2 x 23 kg check-in · 7 kg cabin", fareMultiplier: 1.04 },
-      { name: "British Airways", code: "BA", cabin: "Economy", onTime: 82, baggage: "23 kg check-in · 7 kg cabin", fareMultiplier: 0.98 },
-      { name: "Air India", code: "AI", cabin: "Economy", onTime: 78, baggage: "2 x 23 kg check-in · 8 kg cabin", fareMultiplier: 0.92 },
-      { name: "Lufthansa", code: "LH", cabin: "Economy", onTime: 84, baggage: "23 kg check-in · 8 kg cabin", fareMultiplier: 1.06 },
+      { name: "Emirates", code: "EK", cabin: "Economy", onTime: 89, baggage: "2 x 23 kg check-in · 7 kg cabin", fareMultiplier: 1.08 },
+      { name: "Qatar Airways", code: "QR", cabin: "Economy", onTime: 91, baggage: "2 x 23 kg check-in · 7 kg cabin", fareMultiplier: 1.05 },
+      { name: "Singapore Airlines", code: "SQ", cabin: "Economy", onTime: 93, baggage: "2 x 23 kg check-in · 7 kg cabin", fareMultiplier: 1.12 },
+      { name: "British Airways", code: "BA", cabin: "Economy", onTime: 83, baggage: "23 kg check-in · 7 kg cabin", fareMultiplier: 0.98 },
+      { name: "Air India", code: "AI", cabin: "Economy", onTime: 79, baggage: "2 x 23 kg check-in · 8 kg cabin", fareMultiplier: 0.92 },
+      { name: "Lufthansa", code: "LH", cabin: "Economy", onTime: 85, baggage: "23 kg check-in · 8 kg cabin", fareMultiplier: 1.06 },
+      { name: "Etihad Airways", code: "EY", cabin: "Economy", onTime: 88, baggage: "2 x 23 kg check-in · 7 kg cabin", fareMultiplier: 1.02 },
+      { name: "United Airlines", code: "UA", cabin: "Economy", onTime: 81, baggage: "23 kg check-in · 7 kg cabin", fareMultiplier: 0.99 },
     ];
   }
 
   if (distanceKm > 4500) {
-    // Europe / UK
+    // Europe / UK / Japan
     return [
-      { name: "Qatar Airways", code: "QR", cabin: "Economy", onTime: 89, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.05 },
-      { name: "Emirates", code: "EK", cabin: "Economy", onTime: 88, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.08 },
-      { name: "Air India", code: "AI", cabin: "Economy", onTime: 79, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 0.92 },
-      { name: "Lufthansa", code: "LH", cabin: "Economy", onTime: 85, baggage: "23 kg check-in · 8 kg cabin", fareMultiplier: 1.02 },
+      { name: "Qatar Airways", code: "QR", cabin: "Economy", onTime: 90, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.05 },
+      { name: "Emirates", code: "EK", cabin: "Economy", onTime: 89, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.08 },
+      { name: "Singapore Airlines", code: "SQ", cabin: "Economy", onTime: 93, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.14 },
+      { name: "All Nippon Airways (ANA)", code: "NH", cabin: "Economy", onTime: 94, baggage: "2 x 23 kg check-in · 10 kg cabin", fareMultiplier: 1.10 },
+      { name: "Japan Airlines (JAL)", code: "JL", cabin: "Economy", onTime: 92, baggage: "2 x 23 kg check-in · 10 kg cabin", fareMultiplier: 1.09 },
+      { name: "Air India", code: "AI", cabin: "Economy", onTime: 80, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 0.92 },
+      { name: "Lufthansa", code: "LH", cabin: "Economy", onTime: 86, baggage: "23 kg check-in · 8 kg cabin", fareMultiplier: 1.02 },
+      { name: "Etihad Airways", code: "EY", cabin: "Economy", onTime: 87, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.01 },
     ];
   }
 
   // SE Asia / Middle East
   return [
-    { name: "Singapore Airlines", code: "SQ", cabin: "Economy", onTime: 92, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.15 },
-    { name: "Emirates", code: "EK", cabin: "Economy", onTime: 88, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.08 },
-    { name: "IndiGo International", code: "6E", cabin: "Economy", onTime: 85, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 0.85 },
-    { name: "Thai Airways", code: "TG", cabin: "Economy", onTime: 83, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 0.96 },
+    { name: "Singapore Airlines", code: "SQ", cabin: "Economy", onTime: 93, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.15 },
+    { name: "Emirates", code: "EK", cabin: "Economy", onTime: 89, baggage: "25 kg check-in · 7 kg cabin", fareMultiplier: 1.08 },
+    { name: "IndiGo International", code: "6E", cabin: "Economy", onTime: 86, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 0.85 },
+    { name: "Thai Airways", code: "TG", cabin: "Economy", onTime: 84, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 0.96 },
+    { name: "Malaysia Airlines", code: "MH", cabin: "Economy", onTime: 82, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 0.92 },
+    { name: "AirAsia", code: "AK", cabin: "Economy", onTime: 80, baggage: "20 kg check-in · 7 kg cabin", fareMultiplier: 0.78 },
+    { name: "Cathay Pacific", code: "CX", cabin: "Economy", onTime: 88, baggage: "23 kg check-in · 7 kg cabin", fareMultiplier: 1.06 },
   ];
 }
 
-/** Build rich outbound + return flight options for origin → gateway. */
+/** Build rich outbound + return flight options for origin → gateway (up to 15 each). */
 export function buildRouteFlights(
   originRaw: string,
   gatewayRaw: string,
@@ -444,82 +490,112 @@ export function buildRouteFlights(
 ): FlightOption[] {
   const origin = originRaw.trim() || "Your city";
   const gw = gatewayRaw.split(/[(,]/)[0].trim();
-  const dur = fmtDuration(est.durationHours);
   const airlines = getAirlinesForSector(est.domestic, est.distanceKm);
-
   const baseFare = Math.round((est.fareLow + est.fareHigh) / 2);
 
   const outTimes = [
-    { depart: "04:30", early: true, durOffset: 0 },
-    { depart: "09:15", early: false, durOffset: 0.2 },
-    { depart: "16:40", early: false, durOffset: -0.1 },
-    { depart: "21:50", early: false, durOffset: 0.5 },
+    { depart: "04:15", early: true, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "05:30", early: true, durOffset: -0.2, stopType: 0, cabin: "Economy" },
+    { depart: "06:45", early: true, durOffset: 0.3, stopType: 1, cabin: "Economy" },
+    { depart: "08:15", early: false, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "09:30", early: false, durOffset: 0.2, stopType: 0, cabin: "Economy" },
+    { depart: "10:45", early: false, durOffset: 0.8, stopType: 1, cabin: "Economy" },
+    { depart: "12:15", early: false, durOffset: -0.1, stopType: 0, cabin: "Economy" },
+    { depart: "13:45", early: false, durOffset: 0.4, stopType: 1, cabin: "Economy" },
+    { depart: "15:20", early: false, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "16:40", early: false, durOffset: -0.1, stopType: 0, cabin: "Economy" },
+    { depart: "18:10", early: false, durOffset: 0.6, stopType: 1, cabin: "Premium Economy" },
+    { depart: "19:30", early: false, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "20:50", early: false, durOffset: 0.3, stopType: 0, cabin: "Economy" },
+    { depart: "22:15", early: false, durOffset: 0.5, stopType: 1, cabin: "Economy" },
+    { depart: "23:55", early: false, durOffset: 0.1, stopType: 0, cabin: "Economy" },
   ];
 
   const retTimes = [
-    { depart: "08:15", early: false, durOffset: 0 },
-    { depart: "13:40", early: false, durOffset: 0.3 },
-    { depart: "19:20", early: false, durOffset: -0.2 },
-    { depart: "23:05", early: false, durOffset: 0.4 },
+    { depart: "05:00", early: true, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "06:30", early: true, durOffset: 0.2, stopType: 1, cabin: "Economy" },
+    { depart: "08:15", early: false, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "09:45", early: false, durOffset: 0.1, stopType: 0, cabin: "Economy" },
+    { depart: "11:20", early: false, durOffset: 0.7, stopType: 1, cabin: "Economy" },
+    { depart: "12:50", early: false, durOffset: -0.1, stopType: 0, cabin: "Economy" },
+    { depart: "14:15", early: false, durOffset: 0.3, stopType: 1, cabin: "Economy" },
+    { depart: "15:40", early: false, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "17:10", early: false, durOffset: -0.2, stopType: 0, cabin: "Economy" },
+    { depart: "18:30", early: false, durOffset: 0.5, stopType: 1, cabin: "Premium Economy" },
+    { depart: "19:50", early: false, durOffset: 0, stopType: 0, cabin: "Economy" },
+    { depart: "21:15", early: false, durOffset: 0.2, stopType: 0, cabin: "Economy" },
+    { depart: "22:30", early: false, durOffset: 0.4, stopType: 1, cabin: "Economy" },
+    { depart: "23:15", early: false, durOffset: 0.1, stopType: 0, cabin: "Economy" },
+    { depart: "23:55", early: false, durOffset: -0.1, stopType: 0, cabin: "Economy" },
   ];
 
   const flights: FlightOption[] = [];
 
-  // Outbound flights
+  // Outbound flights (up to 15 options)
   outTimes.forEach((t, i) => {
     const carrier = airlines[i % airlines.length];
-    const optionFare = Math.round((baseFare * carrier.fareMultiplier) / 500) * 500;
-    const durH = est.durationHours + t.durOffset;
+    const stops = t.stopType === 0 ? Math.min(1, est.stops) : Math.max(1, est.stops);
+    const stopHint = stops === 0 ? "Nonstop" : est.stopHint;
+    const durH = Math.max(1, est.durationHours + t.durOffset);
+    const cabin = t.cabin === "Premium Economy" ? "Premium Economy" : carrier.cabin;
+    const fareMult = carrier.fareMultiplier * (cabin === "Premium Economy" ? 1.25 : 1);
+    const optionFare = Math.round((baseFare * fareMult) / 500) * 500;
+
     flights.push({
       id: `flight_out_${i + 1}`,
       airline: carrier.name,
-      flightNo: `${carrier.code}-${100 + (i + 1) * 117}`,
+      flightNo: `${carrier.code}-${100 + (i + 1) * 37}`,
       from: origin,
       to: gw,
       depart: t.depart,
       arrive: arriveClock(t.depart, durH),
-      layover: est.stopHint,
+      layover: stopHint,
       baggage: carrier.baggage,
       fare: optionFare,
       sourceId,
       earlyMorning: t.early,
       duration: fmtDuration(durH),
-      stops: est.stops,
-      stopDetail: est.stops === 0 ? "Nonstop" : est.stopHint,
-      cabin: carrier.cabin,
-      refundable: i === 0 || i === 1,
-      fareLow: Math.round((est.fareLow * carrier.fareMultiplier) / 500) * 500,
-      fareHigh: Math.round((est.fareHigh * carrier.fareMultiplier) / 500) * 500,
+      stops,
+      stopDetail: stopHint,
+      cabin,
+      refundable: i % 3 === 0,
+      fareLow: Math.round((est.fareLow * fareMult) / 500) * 500,
+      fareHigh: Math.round((est.fareHigh * fareMult) / 500) * 500,
       estimated: true,
       onTime: carrier.onTime,
     });
   });
 
-  // Return flights
+  // Return flights (up to 15 options)
   retTimes.forEach((t, i) => {
-    const carrier = airlines[(i + 1) % airlines.length];
-    const optionFare = Math.round((baseFare * carrier.fareMultiplier) / 500) * 500;
-    const durH = est.durationHours + t.durOffset;
+    const carrier = airlines[(i + 2) % airlines.length];
+    const stops = t.stopType === 0 ? Math.min(1, est.stops) : Math.max(1, est.stops);
+    const stopHint = stops === 0 ? "Nonstop" : est.stopHint;
+    const durH = Math.max(1, est.durationHours + t.durOffset);
+    const cabin = t.cabin === "Premium Economy" ? "Premium Economy" : carrier.cabin;
+    const fareMult = carrier.fareMultiplier * (cabin === "Premium Economy" ? 1.25 : 1);
+    const optionFare = Math.round((baseFare * fareMult) / 500) * 500;
+
     flights.push({
       id: `flight_ret_${i + 1}`,
       airline: carrier.name,
-      flightNo: `${carrier.code}-${200 + (i + 1) * 113}`,
+      flightNo: `${carrier.code}-${200 + (i + 1) * 41}`,
       from: gw,
       to: origin,
       depart: t.depart,
       arrive: arriveClock(t.depart, durH),
-      layover: est.stopHint,
+      layover: stopHint,
       baggage: carrier.baggage,
       fare: optionFare,
       sourceId,
-      earlyMorning: false,
+      earlyMorning: t.early,
       duration: fmtDuration(durH),
-      stops: est.stops,
-      stopDetail: est.stops === 0 ? "Nonstop" : est.stopHint,
-      cabin: carrier.cabin,
-      refundable: i === 0,
-      fareLow: Math.round((est.fareLow * carrier.fareMultiplier) / 500) * 500,
-      fareHigh: Math.round((est.fareHigh * carrier.fareMultiplier) / 500) * 500,
+      stops,
+      stopDetail: stopHint,
+      cabin,
+      refundable: i % 4 === 0,
+      fareLow: Math.round((est.fareLow * fareMult) / 500) * 500,
+      fareHigh: Math.round((est.fareHigh * fareMult) / 500) * 500,
       estimated: true,
       onTime: carrier.onTime,
     });

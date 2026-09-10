@@ -33,7 +33,14 @@ const POOLS: Record<string, string[]> = {
     "photo-1464822759023-fed622ff2c3b", // dramatic snow capped peak
     "photo-1533240332313-0db49b459ad6", // hiking mountain trail
     "photo-1519681393784-d120267933ba", // high alpine ridge
-    "photo-1544735716-392fe2489ffa", // himalayan summit climb
+    "photo-1506744038136-46273834b3fb", // sweeping scenic mountain valley
+  ],
+  landscape: [
+    "photo-1506744038136-46273834b3fb", // sweeping valley & mountain scenery
+    "photo-1470071459604-3b5ec3a7fe05", // misty pine mountain valley
+    "photo-1464822759023-fed622ff2c3b", // high mountain ridge panorama
+    "photo-1470770841072-f978cf4d019e", // pristine reflection landscape
+    "photo-1439066615861-d1af74d74000", // turquoise alpine glacial view
   ],
   cycling: [
     "photo-1485965120184-e220f721d03e", // road bike scenic view
@@ -41,7 +48,7 @@ const POOLS: Record<string, string[]> = {
     "photo-1544197150-b99a580bb7a8", // mountain biking trail
   ],
   city: [
-    "photo-1502602898657-3e91760cbb34", // vibrant cityscape
+    "photo-1502602898657-3e91760cbb34", // vibrant historic cityscape
     "photo-1514565131-fce0801e5785", // modern skyline night
     "photo-1477959858617-67f30bc75b82", // urban architecture
     "photo-1486406146926-c627a92ad1ab", // iconic architecture
@@ -63,13 +70,13 @@ const POOLS: Record<string, string[]> = {
   ],
   tour: [
     "photo-1503899036084-c55cdd92da26", // scenic landmark exploration
-    "photo-1524492412937-b28074a5d7da", // historic monument visit
+    "photo-1513584684374-8bab748fbf90", // historic landmark architecture
     "photo-1533240332313-0db49b459ad6", // guided trail walk
   ],
   cultural: [
-    "photo-1548013146-72479768bada", // cultural palace / heritage
-    "photo-1524492412937-b28074a5d7da", // historic monument
-    "photo-1558862107-d49ef2a04d72", // spiritual shrine
+    "photo-1513584684374-8bab748fbf90", // classical heritage architecture
+    "photo-1541872703-74c5e44368f9", // historical monument & columns
+    "photo-1503899036084-c55cdd92da26", // cultural heritage landmark
   ],
   himalaya: [
     "photo-1464822759023-fed622ff2c3b", // towering snowy himalayan peaks
@@ -82,7 +89,6 @@ const POOLS: Record<string, string[]> = {
     "photo-1544735716-392fe2489ffa", // himalayan monastery with prayer flags
     "photo-1582510003544-4d00b7f74220", // buddhist stupa & temple flags
     "photo-1558862107-d49ef2a04d72", // serene temple shrine
-    "photo-1548013146-72479768bada", // sacred historic temple
   ],
   buddha: [
     "photo-1558862107-d49ef2a04d72", // golden buddha statue
@@ -104,8 +110,8 @@ const POOLS: Record<string, string[]> = {
   ],
   memorial: [
     "photo-1564507592333-c60657eea523", // historic memorial arch
-    "photo-1524492412937-b28074a5d7da", // national heritage monument
-    "photo-1548013146-72479768bada", // historic stone monument
+    "photo-1486406146926-c627a92ad1ab", // iconic heritage landmark
+    "photo-1503899036084-c55cdd92da26", // historic stone monument
   ],
   hotelroom: [
     "photo-1582719478250-c89cae4dc85b", // luxury suite with scenic view
@@ -129,8 +135,9 @@ const POOLS: Record<string, string[]> = {
     "photo-1555396273-367ea4eb4db5", // authentic local dining
   ],
   town: [
-    "photo-1548013146-72479768bada", // atmospheric valley town
-    "photo-1524492412937-b28074a5d7da", // historic town architecture
+    "photo-1513584684374-8bab748fbf90", // historic town architecture
+    "photo-1519671482749-fd09be7ccebf", // picturesque cobblestone town
+    "photo-1502602898657-3e91760cbb34", // charming old town street
   ],
   vehicle: [
     "photo-1533473359331-0135ef1b58bf", // SUV mountain driving
@@ -150,7 +157,7 @@ export function img(
   credit = "Unsplash"
 ): MediaImage {
   const normalizedPool = pool.toLowerCase();
-  const ids = POOLS[normalizedPool] ?? POOLS.himalaya ?? POOLS.city;
+  const ids = POOLS[normalizedPool] ?? POOLS.landscape ?? POOLS.city;
   const id = ids[counter % ids.length];
   counter++;
   return {
@@ -170,7 +177,7 @@ export function imgSet(
   provenance: MediaImage["provenance"] = "editorial"
 ): MediaImage[] {
   const normalizedPool = pool.toLowerCase();
-  const ids = POOLS[normalizedPool] ?? POOLS.himalaya ?? POOLS.city;
+  const ids = POOLS[normalizedPool] ?? POOLS.landscape ?? POOLS.city;
   return Array.from({ length: n }, (_, i) => {
     const id = ids[(counter + i) % ids.length];
     return {
@@ -189,40 +196,46 @@ export function getCuratedExperienceImage(category: string, name: string): Media
   let pool = "tour";
   if (/raft|whitewater|rapids/i.test(text)) pool = "rafting";
   else if (/water|boat|dive|scuba|snork|jet\s*ski|surf|parasail|ocean|kayak|paddle/i.test(text)) pool = "watersports";
-  else if (/beach|coast|sand|bay/i.test(text)) pool = "beach";
+  else if (/beach|coast|sand|bay|cove/i.test(text)) pool = "beach";
   else if (/bike|cycling|bikepack/i.test(text)) pool = "cycling";
   else if (/monastery|gompa|monk|prayer|buddhis/i.test(text)) pool = "monastery";
   else if (/buddha|statue|shrine/i.test(text)) pool = "buddha";
-  else if (/lake|tso|tarn/i.test(text)) pool = "lake";
-  else if (/fall|cascade|waterfall/i.test(text)) pool = "waterfall";
-  else if (/pass|peak|himalaya|snow|mountain/i.test(text)) pool = "himalaya";
+  else if (/lake|tso|tarn|loch|reservoir/i.test(text)) pool = "lake";
+  else if (/fall|cascade|waterfall|gorge/i.test(text)) pool = "waterfall";
+  else if (/volcano|crag|seat|hill|ridge|cliff|lookout|viewpoint|overlook|vista|peak|summit|mountain/i.test(text)) pool = "landscape";
+  else if (/pass|himalaya|snow|alps/i.test(text)) pool = "himalaya";
   else if (/memorial|war|hero|monument/i.test(text)) pool = "memorial";
   else if (/wildlife|safari|animal|zoo|gator|alligator|everglades/i.test(text)) pool = "wildlife";
   else if (/theme\s*park|roller\s*coaster|disney|universal|carnival/i.test(text)) pool = "theme_park";
   else if (/night|club|pub|bar|lounge|cocktail|party/i.test(text)) pool = "nightlife";
   else if (/food|wine|tasting|dining|culinary|bistro|thukpa|momo/i.test(text)) pool = "food";
-  else if (/culture|temple|museum|art|heritage|history/i.test(text)) pool = "cultural";
-  else if (/trek|hike|adventure|climb|canyon|zipline/i.test(text)) pool = "adventure";
-  else if (/city|architecture|sightseeing|walk/i.test(text)) pool = "city";
+  else if (/culture|temple|museum|art|heritage|history|gallery|castle|palace/i.test(text)) pool = "cultural";
+  else if (/trek|hike|adventure|climb|canyon|zipline|trail|walk/i.test(text)) pool = "adventure";
+  else if (/city|architecture|sightseeing|walk|square|plaza/i.test(text)) pool = "city";
 
   return img(pool, "attraction", "editorial", "Travelism Curated");
 }
 
 export function getCuratedPlaceImage(name: string, destination: string, category = "attraction"): MediaImage {
   const text = `${name} ${destination} ${category}`.toLowerCase();
-  let pool = "himalaya";
-  if (/beach|coast|cove|island|sand|bay|shore/i.test(text)) pool = "beach";
-  else if (/lake|tso|tarn|reservoir|water|river/i.test(text)) pool = "lake";
-  else if (/fall|cascade|waterfall|gorge/i.test(text)) pool = "waterfall";
-  else if (/monastery|gompa|monk|stupa|temple|shrine|church|cathedral|mosque|pagoda/i.test(text)) pool = "monastery";
-  else if (/pass|rohtang|khardung|chang|peak|summit|glacier|snow|ridge|cliff/i.test(text)) pool = "himalaya";
-  else if (/valley|solang|spiti|sissu|kashmiri|meadow|gulaba/i.test(text)) pool = "adventure";
-  else if (/market|bazaar|street|mall|square/i.test(text)) pool = "city";
-  else if (/fort|palace|castle|monument|memorial|ruins|heritage/i.test(text)) pool = "cultural";
-  else if (/park|sanctuary|reserve|forest|safari|wildlife/i.test(text)) pool = "wildlife";
-  else if (/hotel|resort|stay|cottage|camp|homestay/i.test(text)) pool = "resort";
-  else if (/village|town|settlement|kothi/i.test(text)) pool = "town";
-  else if (/road|highway|viewpoint|drive/i.test(text)) pool = "road";
+  let pool = "landscape";
+
+  if (/beach|coast|cove|island|sand|bay|shore|mallorca|ibiza|formentor|cala|playa/i.test(text)) pool = "beach";
+  else if (/lake|como|bellagio|varenna|tso|tarn|reservoir|water|river|lucerne|loch|firth/i.test(text)) pool = "lake";
+  else if (/boat|cruise|ferry|sail|yacht|harbor|port|kayak|canoe/i.test(text)) pool = "watersports";
+  else if (/fall|cascade|waterfall|gorge|canyon|ravine/i.test(text)) pool = "waterfall";
+  else if (/volcano|crag|seat|arthur|calton|hill|peak|summit|mountain|ridge|cliff|lookout|viewpoint|overlook|vista|panorama|highland|glen|moor|spiti/i.test(text)) pool = "landscape";
+  else if (/pass|rohtang|khardung|chang|glacier|snow|alps|matterhorn|zermatt|himalaya/i.test(text)) pool = "himalaya";
+  else if (/valley|solang|meadow|hike|trek|trail|walk|ramble|path/i.test(text)) pool = "adventure";
+  else if (/monastery|gompa|monk|stupa|temple|shrine|church|cathedral|basilica|duomo|mosque|pagoda|abbey/i.test(text)) pool = "cultural";
+  else if (/fort|palace|castle|citadel|fortress|chateau|schloss|monument|memorial|ruins|heritage|villa|balbianello|carlotta|colosseum|louvre|eiffel|holyrood/i.test(text)) pool = "cultural";
+  else if (/museum|gallery|exhibition|theatre|theater|opera|concert|sculpture|art/i.test(text)) pool = "cultural";
+  else if (/market|bazaar|mall|shopping/i.test(text)) pool = "city";
+  else if (/park|garden|botanic|sanctuary|reserve|forest|safari|wildlife|meadows/i.test(text)) pool = "wildlife";
+  else if (/hotel|resort|stay|cottage|camp|homestay|finca|inn|lodge/i.test(text)) pool = "resort";
+  else if (/village|town|settlement|old town|historic|bourgh|borough/i.test(text)) pool = "town";
+  else if (/road|highway|drive|street|avenue|promenade|mile/i.test(text)) pool = "city";
+  else if (/city|capital|metropolis|centre|center|square|plaza/i.test(text)) pool = "city";
 
   return img(pool, "attraction", "editorial", "Travelism Curated");
 }

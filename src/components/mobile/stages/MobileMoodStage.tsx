@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { SteeringBox } from "@/components/ui/SteeringBox";
@@ -20,8 +21,19 @@ export function MobileMoodStage() {
   const blob = useTrip((s) => s.blob);
   const setMoodKey = useTrip((s) => s.setMoodKey);
   const runInvestigation = useTrip((s) => s.runInvestigation);
+  const addComment = useTrip((s) => s.addComment);
   const setStage = useTrip((s) => s.setStage);
   const prefs = blob.preferences;
+  const signals = blob.signals;
+  const [customNote, setCustomNote] = useState("");
+
+  const handleDeploy = () => {
+    if (customNote.trim()) {
+      addComment(customNote.trim(), "trip");
+      setCustomNote("");
+    }
+    runInvestigation();
+  };
 
   return (
     <div className="pb-36 bg-paper px-4 py-5 space-y-6 min-h-screen">
@@ -67,7 +79,7 @@ export function MobileMoodStage() {
       </div>
 
       {/* Active Intelligence Profiles (Matches PC) */}
-      {(prefs.priorities.length > 0 || prefs.deprioritized.length > 0 || prefs.accessibilityNeeds.length > 0) && (
+      {(prefs.priorities.length > 0 || prefs.deprioritized.length > 0 || prefs.accessibilityNeeds.length > 0 || signals.length > 0) && (
         <div className="rounded-2xl border border-brand/25 bg-brand/[0.04] p-3.5 shadow-xs space-y-2">
           <div className="label-eyebrow text-[10px]">Active Trip Steering Signals</div>
           <div className="flex flex-wrap gap-1.5">
@@ -77,7 +89,7 @@ export function MobileMoodStage() {
               </span>
             ))}
             {prefs.deprioritized.map((p) => (
-              <span key={p} className="chip !text-[10px]">
+              <span key={p} className="chip !text-[10px] !text-rose-600 dark:!text-rose-400 font-bold">
                 ↓ {p}
               </span>
             ))}
@@ -88,13 +100,23 @@ export function MobileMoodStage() {
             ))}
             <span className="chip !text-[10px] font-semibold">Budget: {prefs.budgetTier}</span>
             <span className="chip !text-[10px] font-semibold">Pace: {prefs.pace}</span>
+            {signals.slice(-3).map((s) => (
+              <span key={s.id} className="chip !text-[10px] !bg-brand/15 !border-brand/30 font-semibold">
+                💬 {s.text.slice(0, 24)}{s.text.length > 24 ? "…" : ""}
+              </span>
+            ))}
           </div>
         </div>
       )}
 
       {/* Steering Box (Matches PC) */}
       <div>
-        <SteeringBox scope="trip" title="Any custom dietary needs, milestones, or requests?" />
+        <SteeringBox
+          scope="trip"
+          title="Any custom dietary needs, milestones, or requests?"
+          value={customNote}
+          onChangeText={setCustomNote}
+        />
       </div>
 
       {/* Sticky Bottom Action Dock */}
@@ -104,7 +126,7 @@ export function MobileMoodStage() {
             ← Schedule
           </button>
           <button
-            onClick={runInvestigation}
+            onClick={handleDeploy}
             className="btn-primary flex-1 !py-2.5 text-xs font-extrabold shadow-md flex items-center justify-center gap-1.5"
           >
             <span>Launch Deep Investigation</span>

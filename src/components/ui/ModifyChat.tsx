@@ -38,6 +38,8 @@ export function ModifyChat() {
   const addCustomStop = useTrip((s) => s.addCustomStop);
   const removeStopByLabel = useTrip((s) => s.removeStopByLabel);
   const setDayFocus = useTrip((s) => s.setDayFocus);
+  const refineHotels = useTrip((s) => s.refineHotels);
+  const refineInvestigation = useTrip((s) => s.refineInvestigation);
 
   const [text, setText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -114,12 +116,31 @@ export function ModifyChat() {
         const deltas: string[] = [];
         if (data.action && data.action.kind !== "none") {
           const act = data.action;
-          if (act.kind === "upgrade_hotel") {
-            applyInstruction("Make the hotel nicer");
-            deltas.push("Hotel upgraded to luxury tier");
+          if (act.kind === "search_new_hotels") {
+            const query = typeof act.value === "string" ? act.value : userPrompt;
+            void refineHotels(query);
+            deltas.push(`Live search & crawl: Stays matching “${query}”`);
+          } else if (act.kind === "search_new_places") {
+            const query = typeof act.value === "string" ? act.value : userPrompt;
+            void refineInvestigation(query);
+            deltas.push(`Live search & crawl: Places matching “${query}”`);
+          } else if (act.kind === "upgrade_hotel") {
+            // Also trigger a live search if the user wants specific nice styles
+            if (/ryokan|onsen|villa|glamp|boutique|resort|5\s*star|luxury/i.test(userPrompt)) {
+              void refineHotels(userPrompt);
+              deltas.push(`Scouted luxury stays for “${userPrompt}”`);
+            } else {
+              applyInstruction("Make the hotel nicer");
+              deltas.push("Hotel upgraded to luxury tier");
+            }
           } else if (act.kind === "cheaper_hotel") {
-            applyInstruction("A cheaper hotel, please");
-            deltas.push("Switched to budget-friendly stay");
+            if (/hostel|homestay|under|budget|guesthouse|cheap/i.test(userPrompt)) {
+              void refineHotels(userPrompt);
+              deltas.push(`Scouted budget stays for “${userPrompt}”`);
+            } else {
+              applyInstruction("A cheaper hotel, please");
+              deltas.push("Switched to budget-friendly stay");
+            }
           } else if ((act.kind === "set_stay_mode" || act.kind === "remove_all_hotels") && typeof act.value === "string") {
             setStayMode(act.value as any);
             deltas.push(

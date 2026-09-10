@@ -273,6 +273,9 @@ export function isHighAltitudeMountain(name: string): boolean {
 // ITINERARY ENGINE — Harmonious, destination-aware scheduling that respects
 // the user's exact vacation duration.
 // ============================================================================
+// ITINERARY ENGINE — Harmonious, destination-aware scheduling that respects
+// the user's exact vacation duration and partitions multi-destination journeys.
+// ============================================================================
 export function buildItinerary(
   blob: TripBlob,
   dataset: DestinationDataset
@@ -287,6 +290,10 @@ export function buildItinerary(
 
   const days: ItineraryDay[] = [];
   const destName = dataset.meta.name;
+  const destinations = dataset.meta.destinations && dataset.meta.destinations.length >= 2
+    ? dataset.meta.destinations
+    : [destName];
+  const isMultiDest = destinations.length >= 2;
   const gateway = dataset.meta.gateway.split(/[(,]/)[0].trim();
   const isMountainRoadTrip = /tawang|ladakh|spiti|leh/i.test(destName);
   const totalDays = Math.max(1, blob.durationDays);
@@ -295,9 +302,9 @@ export function buildItinerary(
     days.push({
       day: 1,
       title: `Day Trip · ${destName}`,
-      baseLocation: destName,
+      baseLocation: destinations[0] || destName,
       stops: [
-        { label: `Arrive at ${destName}`, start: "09:00", end: "10:00", kind: "travel" },
+        { label: `Arrive at ${destinations[0] || destName}`, start: "09:00", end: "10:00", kind: "travel" },
         ...selectedPlaces.slice(0, 3).map((p) => ({
           placeId: p.id,
           label: p.canonicalName,
@@ -311,6 +318,216 @@ export function buildItinerary(
     return days;
   }
 
+  // ==========================================================================
+  // MULTI-DESTINATION JOURNEY SCHEDULER (N >= 2 hubs)
+  // ==========================================================================
+  if (isMultiDest) {
+    const numHubs = destinations.length;
+    // Calculate days allocated per hub
+    const rawDaysPerHub = totalDays / numHubs;
+    const hubDaySpans: { hub: string; startDay: number; endDay: number }[] = [];
+    let currentStart = 1;
+
+    for (let hIdx = 0; hIdx < numHubs; hIdx++) {
+      const isLast = hIdx === numHubs - 1;
+      const spanLength = isLast ? totalDays - currentStart + 1 : Math.max(1, Math.round(rawDaysPerHub));
+      const endDay = currentStart + spanLength - 1;
+      hubDaySpans.push({ hub: destinations[hIdx], startDay: currentStart, endDay });
+      currentStart = endDay + 1;
+    }
+
+    // Group places and experiences by hub
+    const placesByHub: Record<string, Place[]> = {};
+    const expsByHub: Record<string, typeof selectedExps> = {};
+
+    destinations.forEach((h) => {
+      const hLower = h.toLowerCase();
+      placesByHub[h] = selectedPlaces.filter(
+        (p) => (p.location && p.location.toLowerCase().includes(hLower)) || p.canonicalName.toLowerCase().includes(hLower)
+      );
+      expsByHub[h] = selectedExps.filter(
+        (e) => (e.location && e.location.toLowerCase().includes(hLower)) || e.name.toLowerCase().includes(hLower)
+      );
+    });
+
+    // Fallback unassigned places
+    const assignedPlaceIds = new Set(Object.values(placesByHub).flatMap((arr) => arr.map((p) => p.id)));
+    selectedPlaces.forEach((p) => {
+      if (!assignedPlaceIds.has(p.id)) {
+        placesByHub[destinations[0]]?.push(p);
+      }
+    });
+
+    // Generate schedule day by day
+    for (let dayNum = 1; dayNum <= totalDays; dayNum++) {
+      const hubSpan = hubDaySpans.find((s) => dayNum >= s.startDay && dayNum <= s.endDay) || hubDaySpans[0];
+      const hub = hubSpan.hub;
+      const hubIdx = destinations.indexOf(hub);
+      const isFirstDayOfHub = dayNum === hubSpan.startDay;
+      const isLastDayOfHub = dayNum === hubSpan.endDay;
+      const isFirstDayOfTrip = dayNum === 1;
+      const isLastDayOfTrip = dayNum === totalDays;
+
+      const stops: ItineraryStop[] = [];
+
+      if (isFirstDayOfTrip) {
+        // Leg 1 Arrival
+        stops.push({ label: `Land at Gateway · Arrival in ${hub}`, start: "12:00", end: "13:30", kind: "travel" });
+        stops.push({ label: `Private transfer to your ${hub} hotel`, start: "13:30", end: "14:30", kind: "travel" });
+        stops.push({ label: "Check in · Settle in & refresh", start: "14:30", end: "16:00", kind: "hotel" });
+
+        const hubP = placesByHub[hub] || [];
+        if (hubP[0]) {
+          stops.push({
+            placeId: hubP[0].id,
+            label: `Evening stroll at ${hubP[0].canonicalName}`,
+            start: "17:00",
+            end: "19:30",
+            kind: "visit",
+            note: hubP[0].blurb,
+          });
+        }
+        stops.push({ label: `Welcome dinner in ${hub}`, start: "20:00", end: "22:00", kind: "meal" });
+
+        days.push({
+          day: dayNum,
+          title: `Arrive in ${hub} · Welcome & Settle In`,
+          baseLocation: hub,
+          stops,
+        });
+      } else if (isLastDayOfTrip) {
+        // Final Departure
+        stops.push({ label: `Final breakfast & packing in ${hub}`, start: "08:30", end: "10:00", kind: "meal" });
+        stops.push({ label: "Hotel check-out & baggage assistance", start: "10:30", end: "11:30", kind: "hotel" });
+        stops.push({ label: `Transfer to Airport for departure`, start: "12:00", end: "13:30", kind: "travel" });
+        stops.push({ label: "Check-in, security & flight home", start: "14:00", end: "19:00", kind: "travel" });
+
+        days.push({
+          day: dayNum,
+          title: `Farewell ${hub} · Checkout & Flight Home`,
+          baseLocation: hub,
+          stops,
+        });
+      } else if (isFirstDayOfHub && hubIdx > 0) {
+        // Inter-hub Transfer Day (Hub i-1 -> Hub i)
+        const prevHub = destinations[hubIdx - 1];
+        stops.push({ label: `Morning breakfast in ${prevHub}`, start: "08:00", end: "09:00", kind: "meal" });
+        stops.push({ label: `Check out from ${prevHub} accommodation`, start: "09:30", end: "10:15", kind: "hotel" });
+        stops.push({
+          label: `Inter-city Transfer: ${prevHub} → ${hub} (Scenic Transit / Flight)`,
+          start: "10:30",
+          end: "14:00",
+          kind: "travel",
+          travelTime: "2-3.5 hrs",
+          note: `High-speed regional rail / connecting flight between ${prevHub} and ${hub}.`,
+        });
+        stops.push({ label: `Arrive in ${hub} & check in to hotel`, start: "14:30", end: "16:00", kind: "hotel" });
+
+        const hubP = placesByHub[hub] || [];
+        if (hubP[0]) {
+          stops.push({
+            placeId: hubP[0].id,
+            label: `Afternoon orientation: ${hubP[0].canonicalName}`,
+            start: "16:30",
+            end: "19:00",
+            kind: "visit",
+            note: hubP[0].blurb,
+          });
+        }
+        stops.push({ label: `Sunset dinner & tapas/specialties in ${hub}`, start: "19:30", end: "22:00", kind: "meal" });
+
+        days.push({
+          day: dayNum,
+          title: `Transfer: ${prevHub} → ${hub} · Journey to ${hub}`,
+          baseLocation: hub,
+          stops,
+        });
+      } else {
+        // Exploration Day in Hub
+        stops.push({ label: "Breakfast & Morning Coffee", start: "08:30", end: "09:30", kind: "meal" });
+
+        const hubPlaces = (placesByHub[hub] || []).splice(0, 2);
+        const hubExp = (expsByHub[hub] || []).shift();
+        let clock = 10 * 60; // 10:00 AM
+
+        if (hubPlaces.length > 0) {
+          for (const p of hubPlaces) {
+            stops.push({
+              placeId: p.id,
+              label: `Explore ${p.canonicalName}`,
+              start: fmt(clock),
+              end: fmt(clock + Math.round(p.durationHours * 60)),
+              kind: "visit",
+              note: p.blurb,
+            });
+            clock += Math.round(p.durationHours * 60);
+
+            if (clock <= 14 * 60 && !stops.some((s) => s.label === "Lunch")) {
+              stops.push({ label: `Lunch at local ${hub} cafe/bistro`, start: fmt(clock), end: fmt(clock + 60), kind: "meal" });
+              clock += 60;
+            }
+          }
+
+          if (hubExp && clock < 17 * 60) {
+            stops.push({
+              label: `Activity: ${hubExp.name}`,
+              start: fmt(clock),
+              end: fmt(clock + Math.round((hubExp.durationHours ?? 2) * 60)),
+              kind: "visit",
+              note: hubExp.blurb,
+            });
+            clock += Math.round((hubExp.durationHours ?? 2) * 60);
+          }
+
+          stops.push({ label: `Evening dining & relaxed night in ${hub}`, start: "19:30", end: "22:00", kind: "rest" });
+
+          days.push({
+            day: dayNum,
+            title: `${hub} · ${hubPlaces.map((p) => p.canonicalName).join(" & ")}`,
+            baseLocation: hub,
+            stops,
+          });
+        } else if (hubExp) {
+          stops.push({
+            label: `Booked Experience: ${hubExp.name}`,
+            start: "10:30",
+            end: fmt(10 * 60 + 30 + Math.round((hubExp.durationHours ?? 3) * 60)),
+            kind: "visit",
+            note: hubExp.blurb,
+          });
+          stops.push({ label: "Lunch & relaxation", start: "14:00", end: "15:30", kind: "meal" });
+          stops.push({ label: `Afternoon leisure in ${hub}`, start: "16:00", end: "19:00", kind: "rest" });
+          stops.push({ label: `Dinner at top-rated ${hub} restaurant`, start: "20:00", end: "22:30", kind: "meal" });
+
+          days.push({
+            day: dayNum,
+            title: `${hub} · ${hubExp.name}`,
+            baseLocation: hub,
+            stops,
+          });
+        } else {
+          // Leisure / scenic day in hub
+          stops.push({ label: "Relaxed morning & breakfast", start: "09:00", end: "10:30", kind: "meal" });
+          stops.push({ label: `Scenic wandering, boutique shopping & cafe hopping in ${hub}`, start: "11:00", end: "16:30", kind: "rest" });
+          stops.push({ label: `Sunset lounge & local wine/cuisine in ${hub}`, start: "18:00", end: "21:30", kind: "meal" });
+
+          days.push({
+            day: dayNum,
+            title: `${hub} · Scenic Highlights & Relaxation`,
+            baseLocation: hub,
+            dayType: "sightseeing",
+            stops,
+          });
+        }
+      }
+    }
+
+    return days.sort((a, b) => a.day - b.day);
+  }
+
+  // ==========================================================================
+  // SINGLE DESTINATION SCHEDULER
+  // ==========================================================================
   // ---- DAY 1: Arrival & Check-in ----
   if (isMountainRoadTrip) {
     days.push({
@@ -352,7 +569,6 @@ export function buildItinerary(
   }
 
   // ---- MIDDLE DAYS: Spread places, experiences, and leisure days ----
-  const availableMiddleDays = Math.max(1, totalDays - 2);
   let placeIndex = 0;
   let expIndex = 0;
 

@@ -194,6 +194,7 @@ export interface Place {
   nearby: string[];
   sourceIds: string[];
   confidence: number;
+  location?: string;
   /** lat/lng-ish ordering hint for the itinerary engine (route position) */
   routeOrder: number;
 }
@@ -425,6 +426,7 @@ export type StayStrategy = "single_basecamp" | "multi_stop" | "self_supported" |
 
 export interface Preferences {
   budgetTotal?: number;
+  targetHotelPrice?: number;
   budgetTier: "economical" | "balanced" | "premium";
   pace: "comfortable" | "balanced" | "fast";
   stayMode?: StayMode;

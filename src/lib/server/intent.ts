@@ -14,6 +14,7 @@ const optTravelers = z.coerce.number().optional().transform((n) => (n && n >= 1 
 
 const IntentSchema = z.object({
   destination: z.string(),
+  destinations: z.array(z.string()).default([]),
   region: z.string().optional(),
   originCity: z.string().optional(),
   durationDays: optDays,
@@ -45,7 +46,13 @@ export async function parseIntent(dream: string, signal?: AbortSignal): Promise<
     [
       {
         role: "system",
-        content: `You interpret a traveler's free-text dream into structured intent for a travel investigation system. Return STRICT JSON only. Infer sensibly but do not fabricate a destination that isn't implied.`,
+        content: `You interpret a traveler's free-text dream into structured intent for a travel investigation system. Return STRICT JSON only.
+CRITICAL FOR MULTI-DESTINATION JOURNEYS:
+If the traveler describes a journey spanning multiple cities, regions, or countries (e.g. "Lake Como then Mallorca", "Paris to Lucerne to Rome", "Tokyo, Kyoto & Osaka"):
+1. Set "destination" to the combined journey title, e.g. "Lake Como & Mallorca" or "Paris, Lucerne & Rome".
+2. Set "destinations" to the ordered array of all visited destinations in sequence, e.g. ["Lake Como", "Mallorca"] or ["Paris", "Lucerne", "Rome"].
+3. If only one destination is visited, set "destination" to that city/region and "destinations" to [destination].
+4. Capture all activities, sights, and vibes across all destinations in "priorities".`,
       },
       {
         role: "user",
@@ -53,16 +60,17 @@ export async function parseIntent(dream: string, signal?: AbortSignal): Promise<
 
 Return JSON:
 {
-  "destination": the primary place they want to go (city/region/park),
-  "region": broader region or country if inferable,
+  "destination": combined journey title if multi-destination (e.g. "Lake Como & Mallorca", "Paris & Rome") or primary destination if single,
+  "destinations": array of visited destinations in chronological sequence, e.g. ["Lake Como", "Mallorca"] or ["Paris", "Lucerne", "Rome"],
+  "region": broader region or countries (e.g. "Italy & Spain" or "Western Europe"),
   "originCity": where they're departing from if mentioned,
-  "durationDays": number if mentioned/implied,
+  "durationDays": number if mentioned/implied (e.g. "7 days" => 7),
   "travelers": number if mentioned,
   "budgetTier": "economical" | "balanced" | "premium" (from cues like "cheap flights", "clean but not luxury"),
   "pace": "comfortable" | "balanced" | "fast" (e.g. "don't rush me" => comfortable),
-  "stayMode": "wild_camping" | "campsites_refugios" | "homestays" | "hotels" | "none" (if they mention bikepacking, camping, tents, bivvy, or no hotels, select accordingly; default to "hotels" for regular city/resort holidays),
+  "stayMode": "wild_camping" | "campsites_refugios" | "homestays" | "hotels" | "none" (default to "hotels" for regular city/resort holidays),
   "isSelfSupported": true if bikepacking, self-supported backpacking, hiking with tent/bivvy,
-  "priorities": normalized tags they care about e.g. ["scenery","photography","bathroom_cleanliness","food","comfort","camping","cycling"],
+  "priorities": normalized tags they care about e.g. ["boat_tours","beaches","hiking","scenery","photography","food"],
   "deprioritized": tags they don't care about e.g. ["nightlife","luxury","hotels"],
   "accessibilityNeeds": e.g. ["reduced_mobility"] if traveling with elderly/can't walk far,
   "avoidEarlyFlights": true if they dislike early departures
@@ -73,8 +81,20 @@ Return JSON:
     { signal, reasoning: "medium", maxTokens: 900 }
   );
 
+  let destinations = parsed.destinations && parsed.destinations.length > 0 ? parsed.destinations : [];
+  if (destinations.length === 0) {
+    if (parsed.destination.includes("&")) {
+      destinations = parsed.destination.split("&").map((s) => s.trim()).filter(Boolean);
+    } else if (/\b(?:then|to|and)\b/i.test(parsed.destination)) {
+      destinations = parsed.destination.split(/\b(?:then|to|and)\b/i).map((s) => s.trim()).filter(Boolean);
+    } else {
+      destinations = [parsed.destination];
+    }
+  }
+
   return {
     ...parsed,
+    destinations,
     stayMode: parsed.stayMode || stayModeFallback || "hotels",
     isSelfSupported: parsed.isSelfSupported ?? isSelfSupportedFallback,
   };

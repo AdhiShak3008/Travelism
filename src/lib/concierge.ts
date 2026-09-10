@@ -36,11 +36,19 @@ function num(str: string): number | undefined {
 }
 
 function rupees(str: string): number | undefined {
-  const m = str.match(/(?:₹|rs\.?|inr)\s*([\d.,]+\s*(?:k|thousand|lakh|l)?)/i);
+  const clean = str.replace(/,/g, "").trim();
+  // 1. Prefix: ₹1.5k, rs 1500, inr 1.5k
+  const m = clean.match(/(?:₹|rs\.?|inr)\s*([\d.,]+\s*(?:k|thousand|lakh|l)?)/i);
   if (m) return num(m[1]);
-  // "under 75000" without symbol
-  const m2 = str.match(/(?:under|below|less than|max|budget of|around|about)\s*([\d.,]+\s*(?:k|thousand|lakh|l)?)/i);
+  // 2. Suffix: 1.5k rupees, 1.5k rs, 1500 inr, 1.5k/night
+  const mSuffix = clean.match(/([\d.,]+\s*(?:k|thousand|lakh|l)?)\s*(?:₹|rs\.?|inr|rupees|bucks|per\s*night|\/night)/i);
+  if (mSuffix) return num(mSuffix[1]);
+  // 3. "under 75000", "max 1.5k" without symbol
+  const m2 = clean.match(/(?:under|below|less than|max|budget of|budget|around|about)\s*([\d.,]+\s*(?:k|thousand|lakh|l)?)/i);
   if (m2) return num(m2[1]);
+  // 4. Standalone k notation e.g. "1.5k"
+  const m3 = clean.match(/\b([\d.,]+)\s*(k|thousand|lakh|l)\b/i);
+  if (m3) return num(`${m3[1]}${m3[2]}`);
   return undefined;
 }
 

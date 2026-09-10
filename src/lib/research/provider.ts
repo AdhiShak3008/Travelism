@@ -36,6 +36,7 @@ export interface DestinationMeta {
   hero: string;
   bestSeason: string;
   facts: string[];
+  destinations?: string[];
 }
 
 export interface DestinationDataset {

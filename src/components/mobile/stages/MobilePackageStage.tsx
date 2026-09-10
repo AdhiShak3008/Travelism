@@ -12,6 +12,7 @@ import { CostPanel } from "@/components/ui/CostPanel";
 import { JourneyRibbon } from "@/components/ui/JourneyRibbon";
 import { ItineraryView } from "@/components/ui/ItineraryView";
 import { InteractiveMapView } from "@/components/ui/InteractiveMapView";
+import { LangGraphTelemetry } from "@/components/ui/LangGraphTelemetry";
 
 type MobileTab = "overview" | "itinerary" | "map" | "stays" | "flights" | "todo" | "food" | "transport" | "permits";
 
@@ -174,6 +175,9 @@ Generated with Travelism 2.0`;
               <div className="label-eyebrow text-[10px] mb-2">The Journey Flow</div>
               <JourneyRibbon />
             </div>
+
+            {/* LangGraph Stateful Orchestration Telemetry */}
+            <LangGraphTelemetry />
 
             {/* Primary Stay Card */}
             <div>

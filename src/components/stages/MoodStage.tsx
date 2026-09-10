@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { SteeringBox } from "@/components/ui/SteeringBox";
@@ -22,7 +23,18 @@ export function MoodStage() {
   const setMoodKey = useTrip((s) => s.setMoodKey);
   const setStage = useTrip((s) => s.setStage);
   const runInvestigation = useTrip((s) => s.runInvestigation);
+  const addComment = useTrip((s) => s.addComment);
   const prefs = useTrip((s) => s.blob.preferences);
+  const signals = useTrip((s) => s.blob.signals);
+  const [customNote, setCustomNote] = useState("");
+
+  const handleDeploy = () => {
+    if (customNote.trim()) {
+      addComment(customNote.trim(), "trip");
+      setCustomNote("");
+    }
+    runInvestigation();
+  };
 
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 py-10">
@@ -72,27 +84,37 @@ export function MoodStage() {
         </div>
       </div>
 
-      {(prefs.priorities.length > 0 || prefs.deprioritized.length > 0 || prefs.accessibilityNeeds.length > 0) && (
+      {(prefs.priorities.length > 0 || prefs.deprioritized.length > 0 || prefs.accessibilityNeeds.length > 0 || signals.length > 0) && (
         <div className="mt-6 rounded-2xl border border-brand/25 bg-brand/[0.04] p-4 shadow-sm">
-          <div className="mb-2 label-eyebrow">Active Trip Intelligence Profiles</div>
+          <div className="mb-2 label-eyebrow">Active Trip Intelligence Profiles & Steering</div>
           <div className="flex flex-wrap gap-2">
             {prefs.priorities.map((p) => (
               <span key={p} className="chip !text-emerald-600 dark:!text-emerald-400 font-bold">↑ {p.replace(/_/g, " ")}</span>
             ))}
             {prefs.deprioritized.map((p) => (
-              <span key={p} className="chip">↓ {p}</span>
+              <span key={p} className="chip !text-rose-600 dark:!text-rose-400 font-bold">↓ {p}</span>
             ))}
             {prefs.accessibilityNeeds.map((p) => (
               <span key={p} className="chip !text-terra font-bold">♿ {p.replace(/_/g, " ")}</span>
             ))}
             <span className="chip font-semibold">Budget: {prefs.budgetTier}</span>
             <span className="chip font-semibold">Pace: {prefs.pace}</span>
+            {signals.slice(-3).map((s) => (
+              <span key={s.id} className="chip !bg-brand/15 !border-brand/30 text-xs font-semibold">
+                💬 {s.text.slice(0, 30)}{s.text.length > 30 ? "…" : ""}
+              </span>
+            ))}
           </div>
         </div>
       )}
 
       <div className="mt-8">
-        <SteeringBox scope="trip" title="Any custom requests, dietary needs, or special milestones?" />
+        <SteeringBox
+          scope="trip"
+          title="Any custom requests, dietary needs, or special milestones?"
+          value={customNote}
+          onChangeText={setCustomNote}
+        />
       </div>
 
       <div className="mt-10 flex items-center justify-between pt-6 border-t border-line">
@@ -100,7 +122,7 @@ export function MoodStage() {
           ← Back to Schedule
         </button>
         <button
-          onClick={() => runInvestigation()}
+          onClick={handleDeploy}
           className="btn-primary !px-8 !py-3.5 text-base font-bold shadow-lift"
         >
           Deploy Swarm & Build Trip →

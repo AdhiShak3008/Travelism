@@ -27,12 +27,12 @@ Return STRICT JSON only.`;
 
 // ---------- Destination overview ----------
 const OverviewSchema = z.object({
-  tagline: z.string().max(200).optional(),
-  summary: z.string().max(900).optional(),
+  tagline: z.string().optional(),
+  summary: z.string().optional(),
   region: z.string().optional(),
   bestSeason: z.string().optional(),
   gateway: z.string().optional(),
-  facts: z.array(z.string().max(140)).max(6).optional(),
+  facts: z.array(z.string()).optional().default([]),
 });
 export type Overview = z.infer<typeof OverviewSchema>;
 
@@ -58,21 +58,32 @@ export async function extractOverview(
 
 // ---------- Places / attractions ----------
 const PlaceSchema = z.object({
-  name: z.string(),
-  altNames: z.array(z.string()).max(4).optional().default([]),
-  category: z.enum(["core", "adventure", "enroute"]).optional().default("core"),
-  blurb: z.string().max(220).optional().default(""),
-  description: z.string().max(900).optional(),
-  durationHours: z.coerce.number().min(0.1).max(24).optional(),
-  distanceKm: z.coerce.number().min(0).max(4000).optional(),
+  name: z.string().default("Scenic Highlight"),
+  altNames: z.array(z.string()).optional().default([]),
+  category: z
+    .string()
+    .optional()
+    .default("core")
+    .transform((c) => (c === "adventure" || c === "enroute" ? c : "core")),
+  blurb: z.string().optional().default("").transform((s) => s.slice(0, 300)),
+  description: z.string().optional(),
+  durationHours: z.coerce.number().optional().default(2),
+  distanceKm: z.coerce.number().optional(),
   travelTime: z.string().optional(),
   bestTime: z.string().optional(),
-  difficulty: z.enum(["easy", "moderate", "hard"]).optional(),
-  accessible: z.enum(["yes", "partial", "no"]).optional(),
-  permitRequired: z.boolean().optional(),
-  facts: z.array(z.string().max(160)).max(4).optional().default([]),
+  difficulty: z
+    .string()
+    .optional()
+    .transform((d) => (d === "easy" || d === "moderate" || d === "hard" ? d : undefined)),
+  accessible: z
+    .string()
+    .optional()
+    .transform((a) => (a === "yes" || a === "partial" || a === "no" ? a : undefined)),
+  permitRequired: z.boolean().optional().default(false),
+  facts: z.array(z.string()).optional().default([]),
+  location: z.string().optional(),
 });
-const PlacesSchema = z.object({ places: z.array(PlaceSchema).max(14) });
+const PlacesSchema = z.object({ places: z.array(PlaceSchema).default([]) });
 export type ExtractedPlace = z.infer<typeof PlaceSchema>;
 
 export async function extractPlaces(
@@ -93,7 +104,7 @@ export async function extractPlaces(
     PlacesSchema,
     { signal, reasoning: "low", maxTokens: 6000 }
   );
-  return res.places;
+  return res.places || [];
 }
 
 // ---------- Hotels ----------
@@ -101,17 +112,17 @@ const HotelSchema = z.object({
   name: z.string(),
   location: z.string().optional(),
   room: z.string().optional(),
-  pricePerNight: z.number().min(0).max(500000).optional(),
-  cleanliness: z.number().min(0).max(10).optional(),
-  bathroomScore: z.number().min(0).max(10).optional(),
-  amenities: z.array(z.string()).max(10).default([]),
-  policies: z.array(z.string()).max(6).default([]),
+  pricePerNight: z.coerce.number().optional(),
+  cleanliness: z.coerce.number().optional(),
+  bathroomScore: z.coerce.number().optional(),
+  amenities: z.array(z.string()).optional().default([]),
+  policies: z.array(z.string()).optional().default([]),
   hasElevator: z.boolean().optional(),
-  overallRating: z.number().min(0).max(5).optional(),
-  reviewCount: z.number().min(0).optional(),
-  whyReasons: z.array(z.string().max(120)).max(6).default([]),
+  overallRating: z.coerce.number().optional(),
+  reviewCount: z.coerce.number().optional(),
+  whyReasons: z.array(z.string()).optional().default([]),
 });
-const HotelsSchema = z.object({ hotels: z.array(HotelSchema).max(8) });
+const HotelsSchema = z.object({ hotels: z.array(HotelSchema).default([]) });
 export type ExtractedHotel = z.infer<typeof HotelSchema>;
 
 export async function extractHotels(
@@ -125,8 +136,8 @@ export async function extractHotels(
     ? `Traveler priorities to weight heavily: ${priorities.join(", ")}. Estimate cleanliness/bathroomScore (0-10) from review language.`
     : "";
   const prompt = corpus
-    ? `DESTINATION: ${destination}\n${focus}\n\nFrom the pages, extract 3-6 real hotels/resorts with accurate pricing in INR (convert USD $ to INR using 1 USD = 87 INR, e.g. $400/night -> 34800 INR/night).\nInclude: name, location, room, pricePerNight, cleanliness, bathroomScore, amenities, policies, hasElevator, overallRating, reviewCount, whyReasons.\nReturn JSON: { "hotels": [ ... ] }\n\nPAGES:\n${corpus}`
-    : `DESTINATION: ${destination}\n${focus}\n\nList 3-5 authentic, real hotels/resorts/stays in ${destination} ranging from boutique to luxury with realistic converted pricing in INR (1 USD ≈ 87 INR). Include real amenities, clean score (0-10), bathroom score (0-10), policies, and whyReasons.\nReturn JSON: { "hotels": [ ... ] }`;
+    ? `DESTINATION: ${destination}\n${focus}\n\nFrom the pages, extract 10-18 real, authentic, named hotels/stays in ${destination} across a realistic budget-to-luxury spectrum for this specific destination:\n- Real budget stays / clean hostels / guesthouses / ryokans (realistic market rate in INR for ${destination})\n- Real boutique hotels / mid-range accommodations / heritage properties\n- Real 4-star and 5-star premium hotels and luxury resorts\nIMPORTANT: Use genuine hotel names (e.g. "The Resident Covent Garden", "CitizenM Tower of London", "Apex City of Edinburgh", "The Balmoral", not generic templates).\nProvide accurate, market-realistic pricePerNight in INR calibrated for ${destination} (convert local currencies: 1 GBP ≈ 112 INR, 1 EUR ≈ 95 INR, 1 USD ≈ 87 INR).\nInclude: name, location, room, pricePerNight, cleanliness (0-10), bathroomScore (0-10), amenities, policies, hasElevator, overallRating, reviewCount, whyReasons.\nReturn JSON: { "hotels": [ ... ] }\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\n${focus}\n\nList 10-15 real, authentic, famous and verified hotels/stays in ${destination} across budget, boutique, 4-star, and 5-star luxury tiers with real hotel names (e.g. "The Resident Covent Garden", "CitizenM", "Apex Waterloo Place", "Kimpton Charlotte Square"). Provide authentic, market-calibrated pricing in INR for ${destination} (1 GBP ≈ 112 INR, 1 EUR ≈ 95 INR, 1 USD ≈ 87 INR), real amenities, clean score (0-10), bathroom score (0-10), policies, and whyReasons.\nReturn JSON: { "hotels": [ ... ] }`;
 
   const res = await chatJSON(
     [
@@ -134,7 +145,7 @@ export async function extractHotels(
       { role: "user", content: prompt },
     ],
     HotelsSchema,
-    { signal, reasoning: "low", maxTokens: 4500 }
+    { signal, reasoning: "low", maxTokens: 6500 }
   );
 
   return (res.hotels || []).map((h) => ({
@@ -155,15 +166,23 @@ function formatPolicy(p: string): string {
 }
 
 // ---------- Review intelligence (aspect-level) ----------
-const AspectSchema = z.object({ aspect: z.string(), score: z.number().min(0).max(10), mentions: z.number().min(0).default(0) });
+const AspectSchema = z.object({
+  aspect: z.string(),
+  score: z.coerce.number().default(8.5),
+  mentions: z.coerce.number().default(0),
+});
 const ReviewSchema = z.object({
-  overall: z.number().min(0).max(5).optional(),
-  count: z.number().min(0).optional(),
-  aspects: z.array(AspectSchema).max(12).default([]),
-  positives: z.array(z.string().max(80)).max(6).default([]),
-  negatives: z.array(z.string().max(80)).max(6).default([]),
-  recentConcern: z.string().max(160).optional(),
-  trend: z.enum(["improving", "stable", "declining"]).default("stable"),
+  overall: z.coerce.number().optional(),
+  count: z.coerce.number().optional(),
+  aspects: z.array(AspectSchema).optional().default([]),
+  positives: z.array(z.string()).optional().default([]),
+  negatives: z.array(z.string()).optional().default([]),
+  recentConcern: z.string().optional(),
+  trend: z
+    .string()
+    .optional()
+    .default("stable")
+    .transform((t) => (t === "improving" || t === "declining" ? (t as any) : "stable")),
 });
 export type ExtractedReview = z.infer<typeof ReviewSchema>;
 
@@ -194,13 +213,17 @@ ${corpus}`,
 // ---------- Permits ----------
 const PermitSchema = z.object({
   name: z.string(),
-  requirement: z.string().max(200),
-  status: z.enum(["required", "pending", "not_required"]).default("required"),
-  estimatedCost: z.number().min(0).optional(),
-  process: z.string().max(240).optional(),
-  responsible: z.string().max(80).optional(),
+  requirement: z.string().optional().default("Standard tourist access"),
+  status: z
+    .string()
+    .optional()
+    .default("required")
+    .transform((s) => (s === "not_required" ? "not_required" : s === "pending" ? "pending" : "required")),
+  estimatedCost: z.coerce.number().optional().default(0),
+  process: z.string().optional(),
+  responsible: z.string().optional().default("Traveler"),
 });
-const PermitsSchema = z.object({ permits: z.array(PermitSchema).max(5) });
+const PermitsSchema = z.object({ permits: z.array(PermitSchema).default([]) });
 export type ExtractedPermit = z.infer<typeof PermitSchema>;
 
 export async function extractPermits(
@@ -221,7 +244,7 @@ export async function extractPermits(
     PermitsSchema,
     { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
   );
-  return res.permits;
+  return res.permits || [];
 }
 
 // ---------- Food ----------
@@ -233,10 +256,10 @@ const FoodSchema = z.object({
         cuisine: z.string().optional().default("Local"),
         priceRange: z.string().optional().default("₹₹"),
         location: z.string().optional(),
-        whyRecommended: z.string().max(180).optional().default(""),
+        whyRecommended: z.string().optional().default(""),
       })
     )
-    .max(6),
+    .default([]),
 });
 export type ExtractedFood = z.infer<typeof FoodSchema>["food"][number];
 
@@ -258,7 +281,7 @@ export async function extractFood(
     FoodSchema,
     { signal, model: FAST, reasoning: "low", maxTokens: 1500 }
   );
-  return res.food;
+  return res.food || [];
 }
 
 // ---------- Experiences (bookable things to do, with realistic prices) ----------
@@ -268,22 +291,26 @@ const ExperienceSchema = z.object({
       z.object({
         name: z.string(),
         category: z
-          .enum(["theme_park", "water", "adventure", "wildlife", "tour", "cultural", "wellness", "food_exp", "nightlife"])
+          .string()
           .optional()
-          .default("tour"),
-        blurb: z.string().max(180).optional().default(""),
-        price: z.coerce.number().min(0).max(50000).optional(),
-        priceNote: z.string().max(60).optional(),
+          .default("tour")
+          .transform((c) => {
+            const valid = ["theme_park", "water", "adventure", "wildlife", "tour", "cultural", "wellness", "food_exp", "nightlife"];
+            return valid.includes(c) ? (c as any) : "tour";
+          }),
+        blurb: z.string().optional().default(""),
+        price: z.coerce.number().optional(),
+        priceNote: z.string().optional(),
         perPerson: z.boolean().optional().default(true),
-        durationHours: z.coerce.number().min(0.25).max(12).optional().default(3),
-        difficulty: z.enum(["easy", "moderate", "hard"]).optional(),
+        durationHours: z.coerce.number().optional().default(3),
+        difficulty: z.string().optional().transform((d) => (d === "easy" || d === "moderate" || d === "hard" ? d : undefined)),
         familyFriendly: z.boolean().optional(),
-        minAge: z.coerce.number().min(0).max(21).optional(),
-        location: z.string().max(80).optional(),
-        whyRecommended: z.string().max(160).optional(),
+        minAge: z.coerce.number().optional(),
+        location: z.string().optional(),
+        whyRecommended: z.string().optional(),
       })
     )
-    .max(10),
+    .default([]),
 });
 export type ExtractedExperience = z.infer<typeof ExperienceSchema>["experiences"][number];
 
@@ -295,16 +322,20 @@ export async function extractExperiences(
   const corpus = pageCorpus(pages, 8);
   const prompt = corpus
     ? `DESTINATION: ${destination}
-Extract BOOKABLE, individual single-session activities and experiences in ${destination} (e.g. white water rafting, monastery guided tour, paragliding, boat charters, snorkeling/scuba, wildlife safari, museum passes, food & wine walks, day excursions). Aim for 4-8 activities.
+Extract 4-8 BOOKABLE, single-session activities, entry tickets, and authentic experiences in ${destination} (e.g. monument entry passes, heritage walks, boat cruises, food tasting strolls, adventure sports).
 
 CRITICAL RULES:
-1. EXCLUDE MULTI-DAY PACKAGES: NEVER extract multi-day tour agency vacation packages (e.g. REJECT "6 Nights/7 Days Tour Package", "5D/4N Package", or hotel+cab bundles). Duration MUST be between 1 and 8 hours for a single activity.
-2. PRICING REALISM: Prices must reflect realistic per-person activity rates in INR (convert foreign USD rates using 1 USD ≈ 87 INR):
-   - Guided walking tours & museum passes: 500 – 1,800 INR
-   - White-water rafting, kayaking, water sports: 1,200 – 3,500 INR
-   - Paragliding, adventure zip-lining, day safaris: 2,500 – 5,000 INR
-   - Private boat/yacht charter: 3,000 – 8,000 INR per person
-   - High-cost international activities (US/Europe/Japan/Dubai): $40 – $180 ≈ 3,500 – 15,500 INR.
+1. EXCLUDE MULTI-DAY PACKAGES: Duration MUST be 1 to 8 hours for a single activity.
+2. PRICING ACCURACY & LOCAL CONTEXT:
+   - For Indian domestic destinations (Agra, Delhi, Jaipur, Ladakh, Goa, Kerala, etc.):
+     * Standard monument entry passes & audio guides: ₹50 – ₹300 INR
+     * Local heritage walking tours & group food walks: ₹400 – ₹1,200 INR
+     * Adventure activities (rafting, zipline, desert safari): ₹800 – ₹2,500 INR
+     * Do NOT quote inflated foreign-tourist OTA rates ($40-$80) for basic Indian activities.
+   - For International destinations (Europe, UK, US, Japan, Dubai):
+     * Museum entry / viewing platforms: ₹1,500 – ₹3,500 INR (£15-£30 / €18-€35)
+     * Guided walking tours / boat cruises: ₹2,500 – ₹6,000 INR (£25-£55 / €30-€65)
+     * Full excursions & theme parks: ₹5,000 – ₹12,000 INR
 3. Capture: name, category ("theme_park"|"water"|"adventure"|"wildlife"|"tour"|"cultural"|"wellness"|"food_exp"|"nightlife"), blurb, price (in INR), priceNote, perPerson (boolean), durationHours (1-8), difficulty ("easy"|"moderate"|"hard"), familyFriendly, minAge, location, whyRecommended.
 
 Return JSON: { "experiences": [ ... ] }
@@ -312,12 +343,11 @@ Return JSON: { "experiences": [ ... ] }
 PAGES:
 ${corpus}`
     : `DESTINATION: ${destination}
-Provide 4-8 genuine, highly popular bookable single-session activities and experiences in ${destination} (e.g. boat cruises, water sports, guided walking tours, wildlife safaris, food walks, museum passes, adventure sports).
-
-CRITICAL RULES:
-1. NO multi-day tour packages. Duration MUST be between 1 and 8 hours.
-2. Real market pricing in INR (converted from foreign currencies, e.g. $50 = 4350 INR).
-3. Return JSON: { "experiences": [ { name, category, blurb, price, priceNote, perPerson, durationHours, difficulty, familyFriendly, minAge, location, whyRecommended } ] }`;
+Provide 4-8 genuine, realistic single-session activities and entry passes in ${destination}.
+PRICING RULES:
+- Indian destinations: standard monument entries ₹50–₹300, guided walks ₹400–₹1,000, adventures ₹800–₹2,200 INR.
+- International destinations: convert realistic local prices to INR (1 GBP ≈ 112 INR, 1 EUR ≈ 95 INR, 1 USD ≈ 87 INR).
+Return JSON: { "experiences": [ { name, category, blurb, price, priceNote, perPerson, durationHours, difficulty, familyFriendly, minAge, location, whyRecommended } ] }`;
 
   const res = await chatJSON(
     [

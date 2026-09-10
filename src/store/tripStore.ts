@@ -35,7 +35,7 @@ import {
   generateDayStopsForType,
 } from "@/lib/engine";
 import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
-import { runLiveInvestigation, runRefine, fetchCapabilities, fetchRouteFlights, type LiveProgress } from "@/lib/liveClient";
+import { runLiveInvestigation, runRefine, runRefineHotels, fetchCapabilities, fetchRouteFlights, type LiveProgress } from "@/lib/liveClient";
 import { registerSources } from "@/lib/research/sourceRegistry";
 import { routeInstruction } from "@/lib/concierge";
 
@@ -114,6 +114,7 @@ interface TripStore {
   goToStage: (s: Stage) => void;
   startDream: (dream: string) => Promise<void>;
   refineInvestigation: (text: string) => Promise<void>;
+  refineHotels: (text: string) => Promise<void>;
   liveMode: boolean | null;
   toggleSelectPlace: (placeId: string) => void;
   toggleExperience: (expId: string) => void;
@@ -507,6 +508,48 @@ export const useTrip = create<TripStore>((set, get) => ({
     }
   },
 
+  refineHotels: async (text) => {
+    const { blob, dataset } = get();
+    if (!dataset || !text.trim()) return;
+
+    get().addComment(text, "hotel");
+
+    set({ refining: true, lastMessage: `Sending Pillow & Review Detective out: searching stays for “${text}”` });
+    try {
+      const existingNames = dataset.hotels.map((h) => h.name);
+      const onProgress = (p: LiveProgress) => {
+        if (p.agent === "concierge") return;
+        set((st) => ({
+          agents: st.agents.map((a) => (a.id === p.agent ? { ...a, phase: p.phase, status: p.status, metric: p.metric ?? a.metric } : a)),
+        }));
+      };
+      const result = await runRefineHotels(dataset.meta.name, text, existingNames, onProgress);
+      registerSources(result.sources);
+
+      if (result.found === 0) {
+        set({ refining: false, lastMessage: `No new stays found for “${text}”.` });
+        return;
+      }
+
+      const mergedHotels = [...result.hotels, ...get().dataset!.hotels.filter((h) => !result.hotels.some((rh) => rh.id === h.id))];
+      const mergedReviews = { ...(get().dataset!.reviews ?? {}), ...result.reviews };
+      const mergedSources = { ...(get().dataset!.sources ?? {}), ...result.sources };
+
+      set((st) => ({
+        dataset: st.dataset ? { ...st.dataset, hotels: mergedHotels, reviews: mergedReviews, sources: mergedSources } : st.dataset,
+        refining: false,
+        lastMessage: `Found ${result.found} new stay${result.found > 1 ? "s" : ""} matching “${text}”. Switched your stay to ${result.hotels[0].name}.`,
+      }));
+
+      // Automatically switch to the best matching newly found hotel
+      if (result.hotels[0]) {
+        get().chooseHotel(result.hotels[0]);
+      }
+    } catch (e) {
+      set({ refining: false, lastMessage: "Search for stays failed. Try adjusting your request." });
+    }
+  },
+
   runInvestigation: async () => {
     const { blob, dataset } = get();
     if (!dataset) return;
@@ -607,8 +650,24 @@ export const useTrip = create<TripStore>((set, get) => ({
       };
       chosenHotels = [wildStay];
     } else {
-      const hotel = rankHotels(blob, dataset)[0];
-      chosenHotels = hotel ? [hotel] : [];
+      const destinations = dataset.meta.destinations || [];
+      if (destinations.length >= 2) {
+        const multiStays: HotelOption[] = [];
+        for (const d of destinations) {
+          const dLower = d.toLowerCase();
+          const dHotels = dataset.hotels.filter(
+            (h) => (h.location && h.location.toLowerCase().includes(dLower)) || h.name.toLowerCase().includes(dLower)
+          );
+          const ranked = dHotels.length > 0 ? rankHotels(blob, dataset, dHotels) : rankHotels(blob, dataset);
+          if (ranked[0] && !multiStays.some((s) => s.id === ranked[0].id)) {
+            multiStays.push(ranked[0]);
+          }
+        }
+        chosenHotels = multiStays.length > 0 ? multiStays : rankHotels(blob, dataset).slice(0, destinations.length);
+      } else {
+        const hotel = rankHotels(blob, dataset)[0];
+        chosenHotels = hotel ? [hotel] : [];
+      }
     }
 
     const transport = dataset.transport;
@@ -926,9 +985,18 @@ export const useTrip = create<TripStore>((set, get) => ({
         working.signals = allSignals;
         working.mood = mood;
         working.preferences = derivePreferences(allSignals, working.preferences);
+        
+        if (working.hotels.length && !working.lockedComponentIds.includes(working.hotels[0].id)) {
+          const reRanked = rankHotels(working, dataset);
+          if (reRanked[0] && reRanked[0].id !== working.hotels[0].id) {
+            working.hotels = [reRanked[0], ...working.hotels.slice(1)];
+            deltas.push(`Hotel adjusted to ${reRanked[0].name} (₹${reRanked[0].pricePerNight.toLocaleString("en-IN")}/night)`);
+          }
+        }
+
         reply =
           action.kind === "unknown"
-            ? "I've noted that preference and will adjust your plan accordingly."
+            ? (signals[0]?.interpretation ?? "I've noted that preference and adjusted your hotel and package accordingly.")
             : signals[0]?.interpretation ?? "Noted — I'll keep that in mind.";
         break;
       }
@@ -1157,14 +1225,35 @@ function furthestStage(a: Stage, b: Stage): Stage {
   return STAGE_RANK[b] > STAGE_RANK[a] ? b : a;
 }
 
-function rankHotels(blob: TripBlob, dataset: DestinationDataset): HotelOption[] {
+function rankHotels(blob: TripBlob, dataset: DestinationDataset, customHotels?: HotelOption[]): HotelOption[] {
   const prefBath = blob.preferences.priorities.includes("bathroom_cleanliness");
   const prefClean = blob.preferences.priorities.includes("cleanliness") || prefBath;
   const wantPremium = blob.preferences.budgetTier === "premium";
-  const wantCheap = blob.preferences.budgetTier === "economical";
+
+  // 1. Detect explicit target price from preferences or steering signals
+  let targetSignalPrice: number | undefined = blob.preferences.targetHotelPrice;
+  if (!targetSignalPrice) {
+    for (const s of blob.signals) {
+      if (typeof s.effects.target_hotel_price === "number") {
+        targetSignalPrice = s.effects.target_hotel_price;
+        break;
+      }
+      if (typeof s.effects.target_budget === "number" && s.effects.target_budget <= 25000) {
+        targetSignalPrice = s.effects.target_budget <= 5000 ? s.effects.target_budget : Math.round(s.effects.target_budget / 4);
+        break;
+      }
+    }
+  }
+
+  const wantCheap =
+    blob.preferences.budgetTier === "economical" ||
+    targetSignalPrice != null ||
+    blob.preferences.deprioritized.includes("luxury") ||
+    blob.signals.some((s) => s.effects.avoid_expensive_hotels || s.effects.deprioritize_luxury || /avoid.*expensive|no.*expensive|not.*expensive|no.*5.*star|cheap.*hotel|budget.*hotel|\b\d+\.?\d*\s*k\b/i.test(s.text));
   const needElevator = blob.preferences.accessibilityNeeds.includes("reduced_mobility");
 
-  return [...dataset.hotels].sort((a, b) => score(b) - score(a));
+  const candidates = customHotels || dataset.hotels;
+  return [...candidates].sort((a, b) => score(b) - score(a));
 
   function score(h: HotelOption): number {
     let s = 0;
@@ -1172,8 +1261,39 @@ function rankHotels(blob: TripBlob, dataset: DestinationDataset): HotelOption[] 
     s += h.bathroomScore * (prefBath ? 3.5 : 1.5);
     s += (h.confidence ?? 0.8) * 4;
     if (needElevator) s += h.hasElevator ? 6 : -6;
-    if (wantPremium) s += (h.pricePerNight > 20000 ? 5 : 0);
-    if (wantCheap) s += (h.pricePerNight < 15000 ? 5 : -3);
+
+    const price = h.pricePerNight || 0;
+
+    // Explicit numeric budget target (e.g. 1.5k / 1500)
+    if (targetSignalPrice && targetSignalPrice > 0) {
+      const ratio = price / targetSignalPrice;
+      if (ratio <= 1.4) {
+        s += 60; // massive boost for stay directly matching or below requested budget!
+      } else if (ratio <= 2.2) {
+        s += 30;
+      } else if (ratio <= 3.5) {
+        s += 5;
+      } else if (ratio > 6) {
+        s -= 70; // huge penalty for stays 6x to 20x above the target budget!
+      } else if (ratio > 3.5) {
+        s -= 40;
+      }
+    } else if (wantCheap) {
+      // Heavily favor affordable stays and strongly penalize expensive 5-star / luxury stays (> 12k/night)
+      if (price > 18000) s -= 45;
+      else if (price > 12000) s -= 25;
+      else if (price <= 3500) s += 45; // boost clean budget stays
+      else if (price <= 8000) s += 30; // boost clean boutique stays
+      else s += 10;
+    } else if (wantPremium) {
+      if (price > 20000) s += 25;
+      else if (price < 8000) s -= 15;
+    } else {
+      // Moderate tier (default): prefer balanced good-value options (3,000 - 10,000) over ultra-luxury (25,000+)
+      if (price > 22000) s -= 15;
+      else if (price >= 3000 && price <= 10000) s += 10;
+    }
+
     return s;
   }
 }

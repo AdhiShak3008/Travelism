@@ -117,6 +117,14 @@ export interface RefineResult {
   found: number;
 }
 
+export interface RefineHotelsResult {
+  hotels: import("@/lib/types").HotelOption[];
+  reviews: Record<string, import("@/lib/types").ReviewIntel>;
+  sources: Record<string, import("@/lib/types").Source>;
+  query: string;
+  found: number;
+}
+
 /** Targeted re-investigation: streams progress, resolves with new places. */
 export async function runRefine(
   destination: string,
@@ -128,7 +136,7 @@ export async function runRefine(
   const res = await fetch("/api/refine", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination, request, existingNames }),
+    body: JSON.stringify({ destination, request, existingNames, type: "places" }),
     signal,
   });
   if (!res.ok || !res.body) throw new Error(res.status === 503 ? "live_unavailable" : `http_${res.status}`);
@@ -151,6 +159,48 @@ export async function runRefine(
       const { event, data } = parseFrame(frame);
       if (event === "progress") onProgress(data as LiveProgress);
       else if (event === "done") result = data as RefineResult;
+      else if (event === "error") errorMsg = (data as { message?: string }).message ?? "error";
+    }
+  }
+  if (errorMsg) throw new Error(errorMsg);
+  if (!result) throw new Error("no_result");
+  return result;
+}
+
+/** Targeted stays re-investigation via free search pipeline. */
+export async function runRefineHotels(
+  destination: string,
+  request: string,
+  existingNames: string[],
+  onProgress: (p: LiveProgress) => void,
+  signal?: AbortSignal
+): Promise<RefineHotelsResult> {
+  const res = await fetch("/api/refine", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination, request, existingNames, type: "hotels" }),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(res.status === 503 ? "live_unavailable" : `http_${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: RefineHotelsResult | null = null;
+  let errorMsg: string | null = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const { event, data } = parseFrame(frame);
+      if (event === "progress") onProgress(data as LiveProgress);
+      else if (event === "done") result = data as RefineHotelsResult;
       else if (event === "error") errorMsg = (data as { message?: string }).message ?? "error";
     }
   }

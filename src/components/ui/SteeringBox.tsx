@@ -24,29 +24,47 @@ export function SteeringBox({
   entityId,
   title = "Tell us what you're imagining",
   compact = false,
+  value,
+  onChangeText,
 }: {
   scope: SignalScope;
   entityId?: string;
   title?: string;
   compact?: boolean;
+  value?: string;
+  onChangeText?: (val: string) => void;
 }) {
   const addComment = useTrip((s) => s.addComment);
-  const [text, setText] = useState("");
+  const [internalText, setInternalText] = useState("");
   const [acked, setAcked] = useState<SteeringSignal[] | null>(null);
 
+  const currentText = value !== undefined ? value : internalText;
+
+  function handleChange(val: string) {
+    if (value === undefined) setInternalText(val);
+    onChangeText?.(val);
+  }
+
   function submit() {
-    if (!text.trim()) return;
-    const signals = addComment(text, scope, entityId);
+    if (!currentText.trim()) return;
+    const signals = addComment(currentText, scope, entityId);
     setAcked(signals);
-    setText("");
-    setTimeout(() => setAcked(null), 6500);
+    handleChange("");
+    setTimeout(() => setAcked(null), 8000);
   }
 
   return (
-    <div className={cx("rounded-2xl border border-brand/25 bg-brand/[0.05] p-4", compact && "p-3")}>
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-brand">✎</span>
-        <span className="text-sm font-semibold text-ink">{title}</span>
+    <div className={cx("rounded-2xl border border-brand/25 bg-brand/[0.05] p-4 shadow-sm", compact && "p-3")}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-brand text-base">✎</span>
+          <span className="text-sm font-semibold text-ink">{title}</span>
+        </div>
+        {acked && acked.length > 0 && (
+          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 animate-pulse">
+            ✓ Applied to AI Swarm
+          </span>
+        )}
       </div>
       {!compact && (
         <p className="mb-3 text-xs leading-relaxed text-ink-soft">
@@ -55,16 +73,24 @@ export function SteeringBox({
       )}
       <div className="flex items-end gap-2">
         <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          value={currentText}
+          onChange={(e) => handleChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              submit();
+            }
           }}
           rows={compact ? 2 : 3}
           placeholder={PLACEHOLDERS[scope] ?? PLACEHOLDERS.stage}
-          className="min-h-[44px] flex-1 resize-none rounded-xl border border-line bg-paper px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint/70 focus:border-brand/50"
+          className="min-h-[44px] flex-1 resize-none rounded-xl border border-line bg-paper px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint/70 focus:border-brand/50 focus:ring-1 focus:ring-brand/30"
         />
-        <button onClick={submit} disabled={!text.trim()} className="btn-primary !px-4 !py-2.5">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!currentText.trim()}
+          className="btn-primary !px-4 !py-2.5 font-bold shadow-sm transition-all"
+        >
           Note it
         </button>
       </div>

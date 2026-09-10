@@ -15,6 +15,7 @@ import { ItineraryView } from "@/components/ui/ItineraryView";
 import { InteractiveMapView } from "@/components/ui/InteractiveMapView";
 import { ModifyChat } from "@/components/ui/ModifyChat";
 import { SectionTitle } from "@/components/ui/Primitives";
+import { LangGraphTelemetry } from "@/components/ui/LangGraphTelemetry";
 
 type Tab = "overview" | "itinerary" | "map" | "stays" | "flights" | "todo" | "transport" | "food" | "permits";
 
@@ -39,6 +40,8 @@ export function PackageStage() {
   const setStayMode = useTrip((s) => s.setStayMode);
   const [tab, setTab] = useState<Tab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
+  const [hotelSearch, setHotelSearch] = useState<string>("");
+  const [flightFilter, setFlightFilter] = useState<string>("all");
   const [copied, setCopied] = useState(false);
 
   if (!dataset) return null;
@@ -47,8 +50,27 @@ export function PackageStage() {
 
   const gw = dataset.meta.gateway.split(/[(,]/)[0].trim().toLowerCase();
   const isOutbound = (f: (typeof dataset.flights)[number]) => f.to.toLowerCase().includes(gw) || f.id.includes("out");
-  const allOutbound = dataset.flights.filter(isOutbound);
-  const allReturn = dataset.flights.filter((f) => !isOutbound(f));
+  const rawOutbound = dataset.flights.filter(isOutbound);
+  const rawReturn = dataset.flights.filter((f) => !isOutbound(f));
+
+  const parseHour = (timeStr: string) => {
+    const m = timeStr.match(/^(\d{1,2}):/);
+    return m ? parseInt(m[1], 10) : 12;
+  };
+
+  const filterFlightList = (list: typeof dataset.flights) => {
+    return list.filter((f) => {
+      if (flightFilter === "nonstop") return f.stops === 0;
+      const h = parseHour(f.depart);
+      if (flightFilter === "morning") return h >= 5 && h < 12;
+      if (flightFilter === "midday") return h >= 12 && h < 18;
+      if (flightFilter === "evening") return h >= 18 || h < 5;
+      return true;
+    });
+  };
+
+  const allOutbound = filterFlightList(rawOutbound);
+  const allReturn = filterFlightList(rawReturn);
 
   const isNoHotel = blob.preferences.stayMode === "none" && blob.hotels.length === 0;
   const primaryHotel = blob.hotels[0] || (isNoHotel ? null : dataset.hotels[0]);
@@ -56,14 +78,18 @@ export function PackageStage() {
 
   // Filtered hotels for stays tab
   const filteredHotels = dataset.hotels.filter((h) => {
+    if (hotelSearch.trim()) {
+      const q = hotelSearch.toLowerCase().trim();
+      const matchName = h.name.toLowerCase().includes(q);
+      const matchLoc = (h.location || "").toLowerCase().includes(q);
+      const matchAmenity = h.amenities.some((a) => a.toLowerCase().includes(q));
+      if (!matchName && !matchLoc && !matchAmenity) return false;
+    }
     if (hotelTierFilter === "wild_camping") return h.category === "wild_camping" || h.pricePerNight === 0;
-    if (hotelTierFilter === "luxury") return h.pricePerNight >= 6000 || h.cleanliness >= 9.2;
-    if (hotelTierFilter === "boutique")
-      return (
-        (h.pricePerNight >= 2500 && h.pricePerNight < 6000) ||
-        h.amenities.some((a) => a.toLowerCase().includes("view") || a.toLowerCase().includes("heating"))
-      );
-    if (hotelTierFilter === "budget") return h.pricePerNight < 2500;
+    if (hotelTierFilter === "luxury") return h.pricePerNight >= 18000;
+    if (hotelTierFilter === "mid") return h.pricePerNight >= 8000 && h.pricePerNight < 18000;
+    if (hotelTierFilter === "boutique") return h.pricePerNight >= 3000 && h.pricePerNight < 8000;
+    if (hotelTierFilter === "budget") return h.pricePerNight > 0 && h.pricePerNight < 3000;
     return true;
   });
 
@@ -161,6 +187,11 @@ Generated with Travelism 2.0`;
           ))}
         </div>
       )}
+
+      {/* LangGraph Stateful Multi-Agent Telemetry & Orchestrator */}
+      <div className="mt-6">
+        <LangGraphTelemetry />
+      </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_380px] w-full min-w-0">
         <div className="min-w-0 w-full overflow-hidden">
@@ -266,6 +297,20 @@ Generated with Travelism 2.0`;
                         🏨 Select a Hotel
                       </button>
                     </div>
+                  </div>
+                ) : blob.hotels.length > 1 ? (
+                  <div className="space-y-4">
+                    {blob.hotels.map((h, hIndex) => (
+                      <div key={h.id} className="relative">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="rounded-full bg-brand/10 border border-brand/30 px-3 py-0.5 text-xs font-bold text-brand flex items-center gap-1.5">
+                            <span>🏨</span>
+                            <span>Leg {hIndex + 1} Stay: {h.location}</span>
+                          </span>
+                        </div>
+                        <HotelCard hotel={h} selected={true} />
+                      </div>
+                    ))}
                   </div>
                 ) : primaryHotel ? (
                   <HotelCard hotel={primaryHotel} selected={true} />
@@ -409,33 +454,55 @@ Generated with Travelism 2.0`;
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <SectionTitle
                   eyebrow="Shortlisted Accommodations"
-                  title="Choose Your Preferred Stay"
-                  hint="All stays include verified cleanliness scores, bathroom checks, and authentic amenities. Tap 'Choose This Stay' to update your package."
+                  title={`Choose Your Preferred Stay (${dataset.hotels.length} Options)`}
+                  hint="All stays include verified cleanliness scores, bathroom checks, and authentic amenities. Tap 'Choose This Stay' to update your package in real-time."
                 />
               </div>
 
-              {/* Tier Filter Pills */}
-              <div className="flex flex-wrap items-center gap-2 border-b border-line pb-4">
-                <span className="text-xs font-semibold text-ink-soft mr-1">Filter Tier:</span>
-                {[
-                  { id: "all", label: `All Stays (${dataset.hotels.length})` },
-                  { id: "wild_camping", label: "⛺ Wild Camping & Bivvies (₹0)" },
-                  { id: "luxury", label: "⭐️ Luxury & High-End" },
-                  { id: "boutique", label: "🏔️ Boutique & Views" },
-                  { id: "budget", label: "🏡 Value & Homestays" },
-                ].map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setHotelTierFilter(f.id)}
-                    className={
-                      hotelTierFilter === f.id
-                        ? "rounded-full bg-brand px-3.5 py-1 text-xs font-bold text-paper shadow-sm"
-                        : "rounded-full border border-line bg-paper-2 px-3.5 py-1 text-xs font-medium text-ink-soft hover:text-ink hover:border-brand/40 transition"
-                    }
-                  >
-                    {f.label}
-                  </button>
-                ))}
+              {/* Search and Tier Filters */}
+              <div className="space-y-3 border-b border-line pb-4">
+                <div className="relative max-w-md">
+                  <input
+                    type="text"
+                    value={hotelSearch}
+                    onChange={(e) => setHotelSearch(e.target.value)}
+                    placeholder="Search by hotel name, neighborhood, or amenities (e.g. pool, onsen, view)..."
+                    className="w-full rounded-full border border-line bg-paper-2 pl-9 pr-4 py-2 text-xs text-ink outline-none placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand/20 transition"
+                  />
+                  <span className="absolute left-3 top-2.5 text-ink-faint text-xs">🔍</span>
+                  {hotelSearch && (
+                    <button
+                      onClick={() => setHotelSearch("")}
+                      className="absolute right-3 top-2 text-ink-faint hover:text-ink text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-ink-soft mr-1">Filter Tier:</span>
+                  {[
+                    { id: "all", label: `All Stays (${dataset.hotels.length})` },
+                    { id: "wild_camping", label: "⛺ Wild Camping & Bivvies (₹0)" },
+                    { id: "budget", label: "🏡 Budget (< ₹3k)" },
+                    { id: "boutique", label: "🏔️ Boutique (₹3k - ₹8k)" },
+                    { id: "mid", label: "✨ Mid-Range (₹8k - ₹18k)" },
+                    { id: "luxury", label: "⭐️ Luxury (₹18k+)" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setHotelTierFilter(f.id)}
+                      className={
+                        hotelTierFilter === f.id
+                          ? "rounded-full bg-brand px-3.5 py-1 text-xs font-bold text-paper shadow-sm"
+                          : "rounded-full border border-line bg-paper-2 px-3.5 py-1 text-xs font-medium text-ink-soft hover:text-ink hover:border-brand/40 transition"
+                      }
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Zero-Hotel Option Banner */}
@@ -464,16 +531,31 @@ Generated with Travelism 2.0`;
 
               {/* List of Hotels */}
               <div className="space-y-5">
-                {filteredHotels.map((h) => {
-                  const isSelected = blob.hotels.some((x) => x.id === h.id);
-                  return (
-                    <HotelCard
-                      key={h.id}
-                      hotel={h}
-                      selected={isSelected}
-                    />
-                  );
-                })}
+                {filteredHotels.length === 0 ? (
+                  <div className="rounded-2xl border border-line bg-card p-8 text-center text-ink-soft">
+                    <p className="text-sm font-medium">No stays match your current filter.</p>
+                    <button
+                      onClick={() => {
+                        setHotelTierFilter("all");
+                        setHotelSearch("");
+                      }}
+                      className="mt-2 text-xs font-bold text-brand hover:underline"
+                    >
+                      Reset filters →
+                    </button>
+                  </div>
+                ) : (
+                  filteredHotels.map((h) => {
+                    const isSelected = blob.hotels.some((x) => x.id === h.id);
+                    return (
+                      <HotelCard
+                        key={h.id}
+                        hotel={h}
+                        selected={isSelected}
+                      />
+                    );
+                  })
+                )}
               </div>
             </div>
           )}
@@ -483,9 +565,33 @@ Generated with Travelism 2.0`;
             <div className="space-y-8">
               <SectionTitle
                 eyebrow="Airlines & Flight Options"
-                title={`Flights between ${blob.origin || "Origin"} and ${dataset.meta.gateway}`}
-                hint="Real duration estimates, layover hubs, baggage policies, and market-accurate airfares."
+                title={`Flights between ${blob.origin || "Origin"} and ${dataset.meta.gateway} (${rawOutbound.length} Outbound / ${rawReturn.length} Return Options)`}
+                hint="Real flight schedules across 24-hour departure bands, airlines, cabin classes, baggage allowances, and live airfares."
               />
+
+              {/* Departure Time Filter Pills */}
+              <div className="flex flex-wrap items-center gap-2 border-b border-line pb-4">
+                <span className="text-xs font-semibold text-ink-soft mr-1">Time of Day:</span>
+                {[
+                  { id: "all", label: `All Flights (${rawOutbound.length})` },
+                  { id: "morning", label: "🌅 Morning (05:00 - 12:00)" },
+                  { id: "midday", label: "☀️ Midday (12:00 - 18:00)" },
+                  { id: "evening", label: "🌙 Evening & Red-eye (18:00 - 05:00)" },
+                  { id: "nonstop", label: "⚡ Nonstop Only" },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFlightFilter(f.id)}
+                    className={
+                      flightFilter === f.id
+                        ? "rounded-full bg-brand px-3.5 py-1 text-xs font-bold text-paper shadow-sm"
+                        : "rounded-full border border-line bg-paper-2 px-3.5 py-1 text-xs font-medium text-ink-soft hover:text-ink hover:border-brand/40 transition"
+                    }
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
 
               {/* Current Selected */}
               <div className="grid gap-4 sm:grid-cols-2">
@@ -495,22 +601,30 @@ Generated with Travelism 2.0`;
 
               {/* All Alternative Outbound Flights */}
               <div className="border-t border-line pt-6">
-                <h3 className="display text-xl font-semibold text-ink mb-3">All Outbound Flight Options</h3>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="display text-xl font-semibold text-ink">Outbound Flights ({allOutbound.length})</h3>
+                  <span className="text-xs text-ink-faint">1-Click to select</span>
+                </div>
                 <div className="space-y-3">
                   {allOutbound.map((f) => {
                     const isSelected = blob.flight?.id === f.id;
                     return (
-                      <div key={f.id} className="card p-4 flex flex-wrap items-center justify-between gap-4">
+                      <div key={f.id} className={cx("card p-4 flex flex-wrap items-center justify-between gap-4 transition-all", isSelected && "border-brand ring-2 ring-brand/20 bg-brand/[0.02]")}>
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-ink text-base">✈️ {f.airline}</span>
                             <span className="chip !text-[11px] !py-0.5">{f.cabin ?? "Economy"}</span>
                             <span className="text-xs text-ink-faint">Flight {f.flightNo}</span>
+                            {f.earlyMorning && (
+                              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                                🌅 Early Flight
+                              </span>
+                            )}
                           </div>
                           <div className="text-sm text-ink-soft mt-1">
-                            {f.depart} → {f.arrive} · <strong>{f.duration}</strong> · {f.stops === 0 ? "Nonstop" : f.stopDetail ?? f.layover}
+                            <strong>{f.depart}</strong> → <strong>{f.arrive}</strong> · <span>{f.duration}</span> · {f.stops === 0 ? <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Nonstop</span> : f.stopDetail ?? f.layover}
                           </div>
-                          <div className="text-xs text-ink-faint mt-1">🧳 {f.baggage}</div>
+                          <div className="text-xs text-ink-faint mt-1">🧳 {f.baggage} · {f.refundable ? "Refundable" : "Standard Policy"}</div>
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-right">
@@ -519,7 +633,7 @@ Generated with Travelism 2.0`;
                           </div>
                           <button
                             onClick={() => chooseFlight(f, "out")}
-                            className={isSelected ? "btn-ghost !py-1.5 !px-4 !text-xs !border-brand !text-brand font-semibold" : "btn-primary !py-1.5 !px-4 !text-xs"}
+                            className={isSelected ? "btn-ghost !py-1.5 !px-4 !text-xs !border-brand !text-brand font-semibold" : "btn-primary !py-1.5 !px-4 !text-xs font-semibold"}
                           >
                             {isSelected ? "Selected ✓" : "Pick Flight"}
                           </button>
@@ -532,22 +646,30 @@ Generated with Travelism 2.0`;
 
               {/* All Alternative Return Flights */}
               <div className="border-t border-line pt-6">
-                <h3 className="display text-xl font-semibold text-ink mb-3">All Return Flight Options</h3>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="display text-xl font-semibold text-ink">Return Flights ({allReturn.length})</h3>
+                  <span className="text-xs text-ink-faint">1-Click to select</span>
+                </div>
                 <div className="space-y-3">
                   {allReturn.map((f) => {
                     const isSelected = blob.returnFlight?.id === f.id;
                     return (
-                      <div key={f.id} className="card p-4 flex flex-wrap items-center justify-between gap-4">
+                      <div key={f.id} className={cx("card p-4 flex flex-wrap items-center justify-between gap-4 transition-all", isSelected && "border-brand ring-2 ring-brand/20 bg-brand/[0.02]")}>
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-ink text-base">✈️ {f.airline}</span>
                             <span className="chip !text-[11px] !py-0.5">{f.cabin ?? "Economy"}</span>
                             <span className="text-xs text-ink-faint">Flight {f.flightNo}</span>
+                            {f.earlyMorning && (
+                              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                                🌅 Early Flight
+                              </span>
+                            )}
                           </div>
                           <div className="text-sm text-ink-soft mt-1">
-                            {f.depart} → {f.arrive} · <strong>{f.duration}</strong> · {f.stops === 0 ? "Nonstop" : f.stopDetail ?? f.layover}
+                            <strong>{f.depart}</strong> → <strong>{f.arrive}</strong> · <span>{f.duration}</span> · {f.stops === 0 ? <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Nonstop</span> : f.stopDetail ?? f.layover}
                           </div>
-                          <div className="text-xs text-ink-faint mt-1">🧳 {f.baggage}</div>
+                          <div className="text-xs text-ink-faint mt-1">🧳 {f.baggage} · {f.refundable ? "Refundable" : "Standard Policy"}</div>
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-right">
@@ -556,7 +678,7 @@ Generated with Travelism 2.0`;
                           </div>
                           <button
                             onClick={() => chooseFlight(f, "return")}
-                            className={isSelected ? "btn-ghost !py-1.5 !px-4 !text-xs !border-brand !text-brand font-semibold" : "btn-primary !py-1.5 !px-4 !text-xs"}
+                            className={isSelected ? "btn-ghost !py-1.5 !px-4 !text-xs !border-brand !text-brand font-semibold" : "btn-primary !py-1.5 !px-4 !text-xs font-semibold"}
                           >
                             {isSelected ? "Selected ✓" : "Pick Flight"}
                           </button>
