@@ -382,6 +382,7 @@ export async function scrapeLiveSubjectImages(
   }
 
   const isExperienceOrTour = /\b(tour|cruise|walk|walking|excursion|experience|class|tasting|safari|crawl|ticket|tickets|pass|adventure|hike|rental)\b/i.test(subject);
+  const isHotelOrStay = category === "room" || /\b(hotel|resort|inn|lodge|palace|villas|suites|hostel|stay|bivvy|camp)\b/i.test(subject);
 
   // 0. Google Custom Search & Google Places API (when configured)
   try {
@@ -397,14 +398,15 @@ export async function scrapeLiveSubjectImages(
     // continue
   }
 
-  // If this is a commercial tour/activity, query DuckDuckGo & Tavily FIRST to get genuine tour photos
-  if (isExperienceOrTour && results.length < limit) {
+  // If this is a hotel/stay or tour/activity, query DuckDuckGo & Tavily FIRST to get real photos
+  if ((isHotelOrStay || isExperienceOrTour) && results.length < limit) {
     try {
+      const searchTarget = isHotelOrStay ? `${cleanSubject} ${matchingHub} hotel` : `${cleanSubject} ${destClean} travel`;
       const [ddgUrls, tavilyUrls] = await Promise.all([
-        scrapeDuckDuckGoImages(`${cleanSubject} ${destClean} travel`, limit - results.length, signal).catch(() => []),
-        tavilySearchImages(`${cleanSubject} ${destClean} tour photo`, limit * 2, signal).catch(() => []),
+        scrapeDuckDuckGoImages(searchTarget, limit - results.length, signal).catch(() => []),
+        tavilySearchImages(`${searchTarget} photo`, limit * 2, signal).catch(() => []),
       ]);
-      addUrls(ddgUrls, "Web Search");
+      addUrls(ddgUrls, isHotelOrStay ? "Hotel Verified Photo" : "Web Search");
       addUrls(tavilyUrls, "Web Verified");
     } catch {
       // continue

@@ -358,6 +358,21 @@ export function buildItinerary(
       }
     });
 
+    // Helper to resolve the active hotel for a specific destination hub
+    const getStayForHub = (hubName: string): HotelOption | undefined => {
+      const hLower = hubName.toLowerCase();
+      return (
+        blob.hotels.find(
+          (h) =>
+            (h.location && h.location.toLowerCase().includes(hLower)) ||
+            hLower.includes((h.location || "").toLowerCase()) ||
+            h.name.toLowerCase().includes(hLower)
+        ) ||
+        blob.hotels[destinations.indexOf(hubName)] ||
+        blob.hotels[0]
+      );
+    };
+
     // Generate schedule day by day
     for (let dayNum = 1; dayNum <= totalDays; dayNum++) {
       const hubSpan = hubDaySpans.find((s) => dayNum >= s.startDay && dayNum <= s.endDay) || hubDaySpans[0];
@@ -367,14 +382,26 @@ export function buildItinerary(
       const isLastDayOfHub = dayNum === hubSpan.endDay;
       const isFirstDayOfTrip = dayNum === 1;
       const isLastDayOfTrip = dayNum === totalDays;
+      const activeHubHotel = getStayForHub(hub);
 
       const stops: ItineraryStop[] = [];
 
       if (isFirstDayOfTrip) {
         // Leg 1 Arrival
         stops.push({ label: `Land at Gateway · Arrival in ${hub}`, start: "12:00", end: "13:30", kind: "travel" });
-        stops.push({ label: `Private transfer to your ${hub} hotel`, start: "13:30", end: "14:30", kind: "travel" });
-        stops.push({ label: "Check in · Settle in & refresh", start: "14:30", end: "16:00", kind: "hotel" });
+        stops.push({
+          label: `Private transfer to ${activeHubHotel?.name || `${hub} hotel`}`,
+          start: "13:30",
+          end: "14:30",
+          kind: "travel",
+        });
+        stops.push({
+          label: `Check in at ${activeHubHotel?.name || "your hotel"} · Settle in & refresh`,
+          start: "14:30",
+          end: "16:00",
+          kind: "hotel",
+          note: activeHubHotel ? `Room: ${activeHubHotel.room}` : undefined,
+        });
 
         const hubP = placesByHub[hub] || [];
         if (hubP[0]) {
@@ -398,7 +425,12 @@ export function buildItinerary(
       } else if (isLastDayOfTrip) {
         // Final Departure
         stops.push({ label: `Final breakfast & packing in ${hub}`, start: "08:30", end: "10:00", kind: "meal" });
-        stops.push({ label: "Hotel check-out & baggage assistance", start: "10:30", end: "11:30", kind: "hotel" });
+        stops.push({
+          label: `Check out from ${activeHubHotel?.name || `${hub} hotel`} & baggage assistance`,
+          start: "10:30",
+          end: "11:30",
+          kind: "hotel",
+        });
         stops.push({ label: `Transfer to Airport for departure`, start: "12:00", end: "13:30", kind: "travel" });
         stops.push({ label: "Check-in, security & flight home", start: "14:00", end: "19:00", kind: "travel" });
 
@@ -411,8 +443,14 @@ export function buildItinerary(
       } else if (isFirstDayOfHub && hubIdx > 0) {
         // Inter-hub Transfer Day (Hub i-1 -> Hub i)
         const prevHub = destinations[hubIdx - 1];
+        const prevHubHotel = getStayForHub(prevHub);
         stops.push({ label: `Morning breakfast in ${prevHub}`, start: "08:00", end: "09:00", kind: "meal" });
-        stops.push({ label: `Check out from ${prevHub} accommodation`, start: "09:30", end: "10:15", kind: "hotel" });
+        stops.push({
+          label: `Check out from ${prevHubHotel?.name || `${prevHub} accommodation`}`,
+          start: "09:30",
+          end: "10:15",
+          kind: "hotel",
+        });
         stops.push({
           label: `Inter-city Transfer: ${prevHub} → ${hub} (Scenic Transit / Flight)`,
           start: "10:30",
@@ -421,7 +459,13 @@ export function buildItinerary(
           travelTime: "2-3.5 hrs",
           note: `High-speed regional rail / connecting flight between ${prevHub} and ${hub}.`,
         });
-        stops.push({ label: `Arrive in ${hub} & check in to hotel`, start: "14:30", end: "16:00", kind: "hotel" });
+        stops.push({
+          label: `Arrive in ${hub} & check in to ${activeHubHotel?.name || "hotel"}`,
+          start: "14:30",
+          end: "16:00",
+          kind: "hotel",
+          note: activeHubHotel ? `Room: ${activeHubHotel.room}` : undefined,
+        });
 
         const hubP = placesByHub[hub] || [];
         if (hubP[0]) {

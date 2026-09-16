@@ -5,14 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
 import { costTotals } from "@/lib/engine";
 import { MarkdownMessage } from "./MarkdownMessage";
-
-interface Msg {
-  id: string;
-  role: "user" | "concierge";
-  text: string;
-  deltas?: string[];
-  timestamp?: string;
-}
+import { MemoryBadge } from "./MemoryBadge";
 
 const QUICK_QUESTIONS = [
   { label: "🎒 Packing", prompt: "What should I pack for this trip?" },
@@ -27,6 +20,11 @@ const QUICK_QUESTIONS = [
 export function ModifyChat() {
   const blob = useTrip((s) => s.blob);
   const dataset = useTrip((s) => s.dataset);
+  const log = useTrip((s) => s.chatLog);
+  const travelerMemory = useTrip((s) => s.travelerMemory);
+  const addChatMessage = useTrip((s) => s.addChatMessage);
+  const updateTravelerMemory = useTrip((s) => s.updateTravelerMemory);
+
   const applyInstruction = useTrip((s) => s.applyInstruction);
   const setDuration = useTrip((s) => s.setDuration);
   const setTravelers = useTrip((s) => s.setTravelers);
@@ -44,14 +42,6 @@ export function ModifyChat() {
   const [text, setText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [log, setLog] = useState<Msg[]>([
-    {
-      id: "init_1",
-      role: "concierge",
-      text: `Hello! I am your AI Travel Concierge for **${blob.destinationName || "your trip"}**.\n\nAsk me anything about weather, culture, packing essentials, or ask me to adjust your duration, flights, hotel tiers, activities, or daily schedule in real time!`,
-      timestamp: "Just now",
-    },
-  ]);
   const scroller = useRef<HTMLDivElement>(null);
 
   async function send(instruction: string) {
@@ -61,7 +51,7 @@ export function ModifyChat() {
 
     const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const userMsgId = `usr_${Date.now()}`;
-    setLog((l) => [...l, { id: userMsgId, role: "user", text: userPrompt, timestamp: nowTime }]);
+    addChatMessage({ id: userMsgId, role: "user", text: userPrompt, timestamp: nowTime });
     setIsTyping(true);
 
     try {
@@ -86,10 +76,21 @@ export function ModifyChat() {
         totalCost: total,
       };
 
+      // Prepare conversation history (excluding initial greeting to save prompt space)
+      const historyPayload = log.map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        text: m.text,
+      }));
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userPrompt, tripContext }),
+        body: JSON.stringify({
+          message: userPrompt,
+          history: historyPayload,
+          travelerMemory,
+          tripContext,
+        }),
       });
 
       if (res.ok) {
@@ -111,7 +112,23 @@ export function ModifyChat() {
             };
             deltaLabel?: string;
           };
+          memoryDelta?: {
+            learnedFacts?: string[];
+            dietary?: string[];
+            vibes?: string[];
+            style?: string[];
+            pacing?: string[];
+            budget?: string[];
+            companionship?: string[];
+            pastDecisions?: string[];
+            keyNotes?: string[];
+          };
         };
+
+        // Absorb newly learned traveler memories
+        if (data.memoryDelta) {
+          updateTravelerMemory(data.memoryDelta);
+        }
 
         const deltas: string[] = [];
         if (data.action && data.action.kind !== "none") {
@@ -125,7 +142,6 @@ export function ModifyChat() {
             void refineInvestigation(query);
             deltas.push(`Live search & crawl: Places matching “${query}”`);
           } else if (act.kind === "upgrade_hotel") {
-            // Also trigger a live search if the user wants specific nice styles
             if (/ryokan|onsen|villa|glamp|boutique|resort|5\s*star|luxury/i.test(userPrompt)) {
               void refineHotels(userPrompt);
               deltas.push(`Scouted luxury stays for “${userPrompt}”`);
@@ -192,7 +208,7 @@ export function ModifyChat() {
           }
           if (act.deltaLabel) deltas.push(act.deltaLabel);
         } else {
-          // Fallback parsing if message asks to add something to activities
+          // Fallback keyword parsing for adding activities
           const addMatch = userPrompt.match(/(?:add|include|put)\s+(?:this\s+to\s+activities\s+|to\s+activities\s+|)(.+)/i);
           if (addMatch && /(?:activity|activities|party|tour|cruise|experience|visit)/i.test(userPrompt)) {
             const cleanName = addMatch[1].replace(/^(?:this|to activities|activity)\s+/i, "").trim();
@@ -206,46 +222,39 @@ export function ModifyChat() {
 
         const latestMutation = useTrip.getState().blob.mutations[0];
         const allDeltas = Array.from(new Set([...deltas, ...(latestMutation?.deltas ?? [])])).slice(0, 3);
+        const learnedUpdates = data.memoryDelta?.learnedFacts || [];
 
-        setLog((l) => [
-          ...l,
-          {
-            id: `bot_${Date.now()}`,
-            role: "concierge",
-            text: data.reply || "Done! I've updated your trip plan.",
-            deltas: allDeltas.length > 0 ? allDeltas : undefined,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          },
-        ]);
+        addChatMessage({
+          id: `bot_${Date.now()}`,
+          role: "concierge",
+          text: data.reply || "Done! I've updated your trip plan.",
+          deltas: allDeltas.length > 0 ? allDeltas : undefined,
+          memoryUpdates: learnedUpdates.length > 0 ? learnedUpdates : undefined,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        });
       } else {
         applyInstruction(userPrompt);
         const latest = useTrip.getState().blob.mutations[0];
         const msg = useTrip.getState().lastMessage;
-        setLog((l) => [
-          ...l,
-          {
-            id: `bot_${Date.now()}`,
-            role: "concierge",
-            text: msg ?? latest?.summary ?? "I've processed that request and updated your trip settings.",
-            deltas: latest?.deltas,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          },
-        ]);
+        addChatMessage({
+          id: `bot_${Date.now()}`,
+          role: "concierge",
+          text: msg ?? latest?.summary ?? "I've processed that request and updated your trip settings.",
+          deltas: latest?.deltas,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        });
       }
     } catch {
       applyInstruction(userPrompt);
       const latest = useTrip.getState().blob.mutations[0];
       const msg = useTrip.getState().lastMessage;
-      setLog((l) => [
-        ...l,
-        {
-          id: `bot_${Date.now()}`,
-          role: "concierge",
-          text: msg ?? latest?.summary ?? "I've noted that instruction and adjusted your itinerary.",
-          deltas: latest?.deltas,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
+      addChatMessage({
+        id: `bot_${Date.now()}`,
+        role: "concierge",
+        text: msg ?? latest?.summary ?? "I've noted that instruction and adjusted your itinerary.",
+        deltas: latest?.deltas,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      });
     } finally {
       setIsTyping(false);
     }
@@ -281,7 +290,8 @@ export function ModifyChat() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <MemoryBadge compact />
             <button
               onClick={() => setIsExpanded(true)}
               title="Expand Chat"
@@ -314,6 +324,8 @@ export function ModifyChat() {
                 {m.role === "concierge" ? (
                   <>
                     <MarkdownMessage content={m.text} />
+                    
+                    {/* Action execution deltas */}
                     {m.deltas && m.deltas.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line-strong/30 pt-2.5">
                         {m.deltas.map((d, j) => (
@@ -322,6 +334,20 @@ export function ModifyChat() {
                             className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
                           >
                             <span>✓</span> {d}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Learned memory tags */}
+                    {m.memoryUpdates && m.memoryUpdates.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {m.memoryUpdates.map((mem, mi) => (
+                          <span
+                            key={mi}
+                            className="inline-flex items-center gap-1 rounded-full bg-purple-500/10 px-2.5 py-0.5 text-[11px] font-medium text-purple-700 dark:text-purple-300 border border-purple-500/20"
+                          >
+                            <span>🧠 Remembered:</span> {mem}
                           </span>
                         ))}
                       </div>
@@ -356,7 +382,7 @@ export function ModifyChat() {
                     />
                   ))}
                 </span>
-                <span>Concierge is typing…</span>
+                <span>Concierge is recalling preferences & typing…</span>
               </div>
             </motion.div>
           )}
@@ -431,14 +457,17 @@ export function ModifyChat() {
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => setIsExpanded(false)}
-                  className="rounded-xl border border-line bg-paper p-2 text-ink-soft hover:text-ink hover:border-brand/40 transition"
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-3">
+                  <MemoryBadge />
+                  <button
+                    onClick={() => setIsExpanded(false)}
+                    className="rounded-xl border border-line bg-paper p-2 text-ink-soft hover:text-ink hover:border-brand/40 transition"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               {/* Modal Messages */}
@@ -463,6 +492,19 @@ export function ModifyChat() {
                                   className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
                                 >
                                   <span>✓</span> {d}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {m.memoryUpdates && m.memoryUpdates.length > 0 && (
+                            <div className="mt-2.5 flex flex-wrap gap-1.5">
+                              {m.memoryUpdates.map((mem, mi) => (
+                                <span
+                                  key={mi}
+                                  className="inline-flex items-center gap-1 rounded-full bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-300 border border-purple-500/20"
+                                >
+                                  <span>🧠 Remembered:</span> {mem}
                                 </span>
                               ))}
                             </div>
@@ -496,7 +538,7 @@ export function ModifyChat() {
                           />
                         ))}
                       </span>
-                      <span>Concierge is analyzing your request…</span>
+                      <span>Concierge is recalling memory & analyzing your request…</span>
                     </div>
                   </div>
                 )}
@@ -527,16 +569,15 @@ export function ModifyChat() {
                       }
                     }}
                     disabled={isTyping}
-                    placeholder="Ask any question or tell me what changes to make to your trip..."
+                    placeholder="Ask advice or request itinerary changes..."
                     className="flex-1 rounded-full border border-line bg-paper-2 px-5 py-3 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand/20 transition disabled:opacity-50"
                   />
                   <button
                     onClick={() => send(text)}
                     disabled={!text.trim() || isTyping}
-                    className="flex h-11 px-6 items-center justify-center gap-2 rounded-full bg-brand text-paper font-semibold shadow-sm hover:brightness-110 active:scale-95 transition disabled:opacity-30"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand text-paper shadow-md hover:brightness-110 active:scale-95 transition disabled:opacity-30"
                   >
-                    <span>Send</span>
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
                     </svg>
                   </button>

@@ -473,6 +473,29 @@ export type Stage =
 export type BookingState = "planning" | "checkout" | "booked";
 
 // ---------------------------------------------------------------------------
+// AI Concierge Chat & Traveler Memory
+// ---------------------------------------------------------------------------
+export interface TravelerMemory {
+  dietaryRequirements: string[];      // e.g. ["Vegetarian", "Jain", "Halal", "Peanut Allergy"]
+  interestsAndVibes: string[];        // e.g. ["Art museums", "Scenic viewpoints", "Sunset cocktails", "Photography"]
+  travelStyle: string[];              // e.g. ["Boutique stays", "Avoid crowded tour buses", "Luxury dining"]
+  pacingAndRhythm: string[];          // e.g. ["Slow mornings (~10 AM)", "Max 2 stops per day", "Early bird"]
+  budgetConstraints: string[];        // e.g. ["Strict budget under ₹2.5L", "Willing to splurge on fine dining"]
+  companionship: string[];            // e.g. ["Traveling as a couple", "Elderly parents with limited walking"]
+  pastDecisions: string[];            // e.g. ["Selected Ryokan in Kyoto", "Discarded hostel option", "Opted for direct flight"]
+  keyNotes: string[];                 // Freeform distilled facts about this traveler
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "concierge" | "system";
+  text: string;
+  deltas?: string[];
+  memoryUpdates?: string[];
+  timestamp?: string;
+}
+
+// ---------------------------------------------------------------------------
 // THE TRIP BLOB
 // ---------------------------------------------------------------------------
 export interface TripBlob {
@@ -493,6 +516,7 @@ export interface TripBlob {
 
   mood: Mood;
   preferences: Preferences;
+  travelerMemory?: TravelerMemory;
 
   selectedPlaceIds: string[];
   selectedExperienceIds: string[];

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ItineraryDay, ItineraryStop } from "@/lib/types";
 import { useTrip } from "@/store/tripStore";
-import { cx, formatDayDate } from "@/lib/format";
+import { inr, cx, formatDayDate } from "@/lib/format";
 import { InteractiveMapView } from "./InteractiveMapView";
 
 const KIND_GLYPH: Record<ItineraryStop["kind"], string> = {
@@ -29,8 +29,12 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
   const removeStopFromDay = useTrip((s) => s.removeStopFromDay);
   const destinationName = useTrip((s) => s.blob.destinationName) || "Destination";
   const blobDates = useTrip((s) => s.blob.dates);
+  const blobHotels = useTrip((s) => s.blob.hotels);
+  const lockedComponentIds = useTrip((s) => s.blob.lockedComponentIds);
+  const datasetPlaces = useTrip((s) => s.dataset?.places) || [];
 
   const [activeDayMap, setActiveDayMap] = useState<number | null>(null);
+  const [selectedStopPinId, setSelectedStopPinId] = useState<string | null>(null);
   const [addingStopDay, setAddingStopDay] = useState<number | null>(null);
   const [newStopLabel, setNewStopLabel] = useState("");
   const [newStopTime, setNewStopTime] = useState("15:00");
@@ -60,6 +64,16 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
         const isMapOpen = activeDayMap === d.day;
         const isAdding = addingStopDay === d.day;
         const formattedDayDate = formatDayDate(blobDates?.start, d.day);
+
+        const baseLower = (d.baseLocation || "").toLowerCase();
+        const dayHotel =
+          blobHotels.find(
+            (h) =>
+              (h.location && h.location.toLowerCase().includes(baseLower)) ||
+              baseLower.includes((h.location || "").toLowerCase()) ||
+              h.name.toLowerCase().includes(baseLower)
+          ) || blobHotels[0];
+        const isHotelLocked = dayHotel ? lockedComponentIds.includes(dayHotel.id) : false;
 
         return (
           <motion.div
@@ -130,6 +144,32 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
               </div>
             </div>
 
+            {/* Overnight Stay Identification Bar */}
+            {dayHotel && (
+              <div className="px-5 py-2.5 bg-paper-2/40 border-b border-line/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className="text-sm">🏨</span>
+                  <span className="font-bold text-ink">Overnight Stay:</span>
+                  <span className="text-brand font-bold">{dayHotel.name}</span>
+                  <span className="text-ink-soft">({inr(dayHotel.pricePerNight)}/night)</span>
+                  {isHotelLocked && (
+                    <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.2 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                      🔒 Locked
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    setActiveDayMap(d.day);
+                    setSelectedStopPinId(null);
+                  }}
+                  className="text-xs font-semibold text-brand hover:underline"
+                >
+                  View Route on Map ↗
+                </button>
+              </div>
+            )}
+
             {/* Day Focus Dictation Bar */}
             <div className="px-5 py-2.5 border-b border-line/60 bg-paper/50 flex flex-wrap items-center justify-between gap-2">
               <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">
@@ -168,9 +208,13 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
                 >
                   <div className="p-4">
                     <InteractiveMapView
-                      destinationName={destinationName}
+                      destinationName={d.baseLocation || destinationName}
+                      places={datasetPlaces}
+                      hotels={blobHotels}
                       dayStops={d.stops}
                       activeDayNum={d.day}
+                      selectedPinId={selectedStopPinId}
+                      onPinSelect={setSelectedStopPinId}
                     />
                   </div>
                 </motion.div>
@@ -241,8 +285,10 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
                 <span className="absolute left-[13px] bottom-2 top-2 w-0.5 bg-line-strong/60 rounded-full" />
 
                 {d.stops.map((s, i) => {
-                  const mapSearchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${s.label} ${destinationName}`)}`;
-                  const youtubeSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${s.label} ${destinationName}`)}`;
+                  const cleanLabel = s.label.replace(/^(visit|explore|tour|dinner at|lunch at|breakfast at|drive to|check-in at|check out from|checkout from|sunset at|stroll at|orientation:)\s+/i, "").replace(/·.*$/, "").trim();
+                  const mapSearchQuery = `${cleanLabel || s.label} ${d.baseLocation || destinationName}`;
+                  const mapSearchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapSearchQuery)}`;
+                  const youtubeSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${cleanLabel || s.label} ${destinationName}`)}`;
                   const isVisitOrMeal = s.kind === "visit" || s.kind === "meal";
 
                   return (
@@ -279,6 +325,17 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
 
                           {/* Stop Action Links & Delete */}
                           <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setActiveDayMap(d.day);
+                                setSelectedStopPinId(`stop_${i}`);
+                              }}
+                              className="chip !text-[11px] !py-0.5 !px-2 font-semibold !bg-paper hover:!bg-paper-3 text-brand border border-line/80"
+                              title="Focus this place on the map"
+                            >
+                              📍 Focus Map
+                            </button>
+
                             {isVisitOrMeal && (
                               <>
                                 <a
@@ -326,3 +383,4 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
     </div>
   );
 }
+

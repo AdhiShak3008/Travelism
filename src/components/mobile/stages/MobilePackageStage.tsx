@@ -38,12 +38,19 @@ export function MobilePackageStage() {
 
   const [tab, setTab] = useState<MobileTab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
+  const [selectedHubFilter, setSelectedHubFilter] = useState<string>("all");
   const [showCostSheet, setShowCostSheet] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const toggleLock = useTrip((s) => s.toggleLock);
 
   if (!dataset) return null;
   const { total, payableNow, duringTrip } = costTotals(blob.costs);
   const moodTags = Object.entries(blob.mood).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+
+  const destinationHubs = dataset.meta.destinations && dataset.meta.destinations.length >= 2
+    ? dataset.meta.destinations
+    : Array.from(new Set(dataset.hotels.map((h) => h.location).filter(Boolean)));
 
   const gw = dataset.meta.gateway.split(/[(,]/)[0].trim().toLowerCase();
   const isOutbound = (f: (typeof dataset.flights)[number]) => f.to.toLowerCase().includes(gw) || f.id.includes("out");
@@ -55,6 +62,12 @@ export function MobilePackageStage() {
 
   // Filtered hotels for stays tab
   const filteredHotels = dataset.hotels.filter((h) => {
+    if (selectedHubFilter !== "all") {
+      const hLoc = (h.location || "").toLowerCase();
+      const qHub = selectedHubFilter.toLowerCase();
+      const matchHub = hLoc.includes(qHub) || qHub.includes(hLoc) || h.name.toLowerCase().includes(qHub);
+      if (!matchHub) return false;
+    }
     if (hotelTierFilter === "wild_camping") return h.category === "wild_camping" || h.pricePerNight === 0;
     if (hotelTierFilter === "luxury") return h.pricePerNight >= 6000 || h.cleanliness >= 9.2;
     if (hotelTierFilter === "boutique")
@@ -65,6 +78,14 @@ export function MobilePackageStage() {
     if (hotelTierFilter === "budget") return h.pricePerNight < 2500;
     return true;
   });
+
+  const activeHubForDisplay = selectedHubFilter !== "all" ? selectedHubFilter : destinationHubs[0];
+  const currentActiveStayForHub = blob.hotels.find(
+    (h) => (h.location && h.location.toLowerCase().includes((activeHubForDisplay || "").toLowerCase())) ||
+           (activeHubForDisplay || "").toLowerCase().includes((h.location || "").toLowerCase()) ||
+           h.name.toLowerCase().includes((activeHubForDisplay || "").toLowerCase())
+  ) || blob.hotels[0];
+  const isCurrentHubLocked = currentActiveStayForHub ? blob.lockedComponentIds.includes(currentActiveStayForHub.id) : false;
 
   const handleCopySummary = () => {
     const summary = `🌴 TRAVELISM CUSTOM ITINERARY: ${blob.destinationName.toUpperCase()}
@@ -308,10 +329,102 @@ Generated with Travelism 2.0`;
         {/* TAB 4: STAYS & RESORTS */}
         {tab === "stays" && (
           <div className="space-y-4">
+            {/* Multi-Destination Hub Selector */}
+            {destinationHubs.length >= 2 && (
+              <div className="card p-3 shadow-xs space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-brand">Destination Hub</span>
+                  <select
+                    value={selectedHubFilter}
+                    onChange={(e) => setSelectedHubFilter(e.target.value)}
+                    className="rounded-lg border border-line bg-paper-2 px-2.5 py-1 text-xs font-bold text-ink outline-none"
+                  >
+                    <option value="all">📍 All Locations</option>
+                    {destinationHubs.map((hub, hIdx) => (
+                      <option key={hub} value={hub}>
+                        Leg {hIdx + 1}: {hub}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-line/60">
+                  <button
+                    onClick={() => setSelectedHubFilter("all")}
+                    className={cx(
+                      "shrink-0 rounded-full px-3 py-1 text-xs font-bold transition shadow-2xs",
+                      selectedHubFilter === "all" ? "bg-brand text-white" : "border border-line bg-paper-2 text-ink-soft"
+                    )}
+                  >
+                    All ({dataset.hotels.length})
+                  </button>
+                  {destinationHubs.map((hub, hIdx) => {
+                    const isSelected = selectedHubFilter.toLowerCase() === hub.toLowerCase();
+                    const activeHotelForHub = blob.hotels.find(
+                      (h) =>
+                        (h.location && h.location.toLowerCase().includes(hub.toLowerCase())) ||
+                        hub.toLowerCase().includes((h.location || "").toLowerCase()) ||
+                        h.name.toLowerCase().includes(hub.toLowerCase())
+                    );
+                    const isLocked = activeHotelForHub
+                      ? blob.lockedComponentIds.includes(activeHotelForHub.id)
+                      : false;
+
+                    return (
+                      <button
+                        key={hub}
+                        onClick={() => setSelectedHubFilter(hub)}
+                        className={cx(
+                          "shrink-0 rounded-full px-3 py-1 text-xs font-bold transition flex items-center gap-1 shadow-2xs",
+                          isSelected ? "bg-brand text-white" : "border border-line bg-paper-2 text-ink-soft"
+                        )}
+                      >
+                        <span>Leg {hIdx + 1}: {hub}</span>
+                        {isLocked && <span className="text-amber-300 text-[10px]">🔒</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Active Stay Card for this Hub */}
+            {activeHubForDisplay && currentActiveStayForHub && (
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.04] p-3.5 shadow-xs flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                      {selectedHubFilter !== "all" ? `${selectedHubFilter} Stay` : "Active Selection"}
+                    </span>
+                    {isCurrentHubLocked && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                        🔒 Locked
+                      </span>
+                    )}
+                  </div>
+                  <h4 className="text-xs font-bold text-ink truncate mt-0.5">{currentActiveStayForHub.name}</h4>
+                  <p className="text-[11px] text-ink-soft">
+                    {inr(currentActiveStayForHub.pricePerNight)}/night · Clean {currentActiveStayForHub.cleanliness}/10
+                  </p>
+                </div>
+                <button
+                  onClick={() => toggleLock(currentActiveStayForHub.id)}
+                  className={cx(
+                    "rounded-xl border px-2.5 py-1 text-[11px] font-bold shrink-0 transition",
+                    isCurrentHubLocked
+                      ? "border-amber-500 bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                      : "border-line bg-paper-2 text-ink-soft"
+                  )}
+                >
+                  {isCurrentHubLocked ? "🔒 Locked" : "🔓 Lock"}
+                </button>
+              </div>
+            )}
+
             {/* Filter Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
               {[
-                { id: "all", label: "All Stays" },
+                { id: "all", label: "All Tiers" },
                 { id: "wild_camping", label: "⛺ Wild Camping (₹0)" },
                 { id: "luxury", label: "👑 Luxury & Taj" },
                 { id: "boutique", label: "✨ Boutique" },
@@ -333,13 +446,19 @@ Generated with Travelism 2.0`;
             </div>
 
             <div className="grid gap-3.5">
-              {filteredHotels.map((h) => (
-                <HotelCard
-                  key={h.id}
-                  hotel={h}
-                  selected={blob.hotels.some((bh) => bh.id === h.id)}
-                />
-              ))}
+              {filteredHotels.length === 0 ? (
+                <div className="card p-6 text-center text-xs text-ink-soft">
+                  No stays match this location or tier.
+                </div>
+              ) : (
+                filteredHotels.map((h) => (
+                  <HotelCard
+                    key={h.id}
+                    hotel={h}
+                    selected={blob.hotels.some((bh) => bh.id === h.id)}
+                  />
+                ))
+              )}
             </div>
           </div>
         )}

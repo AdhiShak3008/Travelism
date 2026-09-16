@@ -15,7 +15,7 @@ import type {
   TransportOption,
 } from "../types";
 import type { DestinationDataset } from "../research/provider";
-import { parseIntent, type Intent } from "./intent";
+import { parseIntent, cleanDestinationName, type Intent } from "./intent";
 import { tavilySearch, tavilySearchImages } from "./tavily";
 import { freeWebSearch } from "./freeSearch";
 import { scrapeLiveSubjectImages } from "./imageScraper";
@@ -41,6 +41,7 @@ import { fetchWikiImages, fetchActivityImages, isBadImage } from "./wikimedia";
 import { classifySource, recencyWeight, confidenceScore } from "./reliability";
 import { estimateRoute, buildRouteFlights } from "./flightEstimator";
 import { CAP } from "./env";
+import { getRegionalSpendingProfile, resolveCanonicalEntity, healCandidateImages } from "./middleman";
 
 // ============================================================================
 // The orchestrator. dream → intent → discover (Tavily) → crawl real pages →
@@ -86,8 +87,28 @@ export async function investigate(
       accessibilityNeeds: [],
     };
   }
-  const dest = intent.destination;
-  emit({ agent: "concierge", phase: "done", status: `Understood: ${dest}`, metric: intent.priorities.join(", ") || undefined });
+  const rawDest = cleanDestinationName(intent.destination);
+
+  // ---- MIDDLEMAN: entity disambiguation & geofencing ----
+  // Resolve vague/landmark requests to a canonical hub (Taj Mahal → Agra) and
+  // establish the geofence + known closures the rest of the pipeline honors.
+  const canonical = resolveCanonicalEntity(rawDest, intent.region);
+  // Use the canonical hub as the working destination so searches (places,
+  // hotels, experiences, flights) all anchor to the real base city.
+  const dest = canonical.canonicalHub || rawDest;
+  intent.destination = dest;
+  intent.destinations = (intent.destinations && intent.destinations.length > 0 ? intent.destinations : [dest])
+    .map(cleanDestinationName)
+    .filter(Boolean);
+  // ensure the canonical hub is the primary geofence anchor
+  if (!intent.destinations.includes(dest)) intent.destinations.unshift(dest);
+  const geofence = { hub: dest, radiusKm: canonical.geofenceRadiusKm, region: canonical.parentStateOrCountry };
+  emit({
+    agent: "concierge",
+    phase: "done",
+    status: canonical.name !== dest ? `Understood: ${canonical.name} → ${dest}` : `Understood: ${dest}`,
+    metric: intent.priorities.join(", ") || undefined,
+  });
 
   // ---- Source registry (built as we crawl) ----
   const sources: Record<string, Source> = {};
@@ -332,33 +353,36 @@ export async function investigate(
     return kept;
   });
 
-  const places: Place[] = extractedPlaces.map((p, i) => {
-    const wiki = (wikiPlaceImages[i] ?? []).slice(0, 4);
-    const placeImages = wiki.length > 0 ? wiki : [getCuratedPlaceImage(p.name, p.location || dest, p.category)];
-    return {
-      id: `place_${i}_${destinationKey(p.name)}`,
-      canonicalName: p.name,
-      altNames: p.altNames ?? [],
-      category: p.category ?? "core",
-      blurb: p.blurb,
-      description: p.description ?? p.blurb,
-      images: placeImages,
-      videoIds: [],
-      durationHours: p.durationHours ?? 2,
-      distanceKm: p.distanceKm,
-      travelTime: p.travelTime,
-      bestTime: p.bestTime,
-      difficulty: p.difficulty,
-      accessible: p.accessible,
-      permitRequired: p.permitRequired,
-      facts: p.facts ?? [],
-      nearby: [],
-      location: p.location || dest,
-      sourceIds: allPageSourceIds.slice(0, 3),
-      confidence: 0.88,
-      routeOrder: routeOrderFor(p.category ?? "core", i),
-    };
-  });
+  const places: Place[] = await Promise.all(
+    extractedPlaces.map(async (p, i) => {
+      const wiki = (wikiPlaceImages[i] ?? []).slice(0, 4);
+      const rawCandidates = wiki.length > 0 ? wiki : [getCuratedPlaceImage(p.name, p.location || dest, p.category)];
+      const placeImages = await healCandidateImages(rawCandidates, p.name, p.location || dest, "attraction", signal);
+      return {
+        id: `place_${i}_${destinationKey(p.name)}`,
+        canonicalName: p.name,
+        altNames: p.altNames ?? [],
+        category: p.category ?? "core",
+        blurb: p.blurb,
+        description: p.description ?? p.blurb,
+        images: placeImages,
+        videoIds: [],
+        durationHours: p.durationHours ?? 2,
+        distanceKm: p.distanceKm,
+        travelTime: p.travelTime,
+        bestTime: p.bestTime,
+        difficulty: p.difficulty,
+        accessible: p.accessible,
+        permitRequired: p.permitRequired,
+        facts: p.facts ?? [],
+        nearby: [],
+        location: p.location || dest,
+        sourceIds: allPageSourceIds.slice(0, 3),
+        confidence: 0.88,
+        routeOrder: routeOrderFor(p.category ?? "core", i),
+      };
+    })
+  );
 
   const totalPhotos = wikiPlaceImages.reduce((s, arr) => s + arr.length, 0);
   emit({ agent: "lens", phase: "done", status: "Photos gathered & verified", metric: `${totalPhotos} photos` });
@@ -433,7 +457,7 @@ export async function investigate(
     }),
     mapLimited(combinedHotelCandidates, 4, async (h) => {
       try {
-        const live = await withTimeout(scrapeLiveSubjectImages(h.name, dest, "room", 3, signal), 3500, []);
+        const live = await withTimeout(scrapeLiveSubjectImages(h.name, h.location || dest, "room", 3, signal), 3500, []);
         return live.map((im) => im.url);
       } catch {
         return [];
@@ -441,7 +465,8 @@ export async function investigate(
     }),
   ]);
 
-  const hotels: HotelOption[] = combinedHotelCandidates.map((h, i) => {
+  const hotels: HotelOption[] = await Promise.all(
+    combinedHotelCandidates.map(async (h, i) => {
     const riId = `ri_${i}`;
     const intel = reviewIntels[i];
     reviews[riId] = intel;
@@ -461,7 +486,8 @@ export async function investigate(
     const combined = [...scrapedUrls.length > 0 ? webMedia : [], ...crawled];
     const seen = new Set<string>();
     const imgs = combined.filter((im) => (seen.has(im.url) ? false : (seen.add(im.url), true))).slice(0, 5);
-    const finalImgs = imgs.length > 0 ? imgs : [img("hotelroom", "room", "official"), img("resort", "exterior", "official")];
+    const rawHotelImgs = imgs.length > 0 ? imgs : [img("hotelroom", "room", "official"), img("resort", "exterior", "official")];
+    const finalImgs = await healCandidateImages(rawHotelImgs, h.name, h.location ?? dest, "room", signal);
 
     return {
       id: `hotel_${i}`,
@@ -482,7 +508,7 @@ export async function investigate(
       whyReasons: h.whyReasons?.length ? h.whyReasons : defaultWhy(intent, cleanliness, bathroomScore),
       confidence: 0.9,
     };
-  });
+  }));
 
   if (isOutdoorStay || intent.stayMode === "wild_camping" || intent.isSelfSupported) {
     const wildCampStay: HotelOption = {
@@ -522,7 +548,7 @@ export async function investigate(
   emit({ agent: "foodie", phase: "working", status: "Scouting restaurants & culinary specialties" });
   const rawFoodPhotos = await mapLimited(extractedFood, 3, async (f) => {
     try {
-      const live = await withTimeout(scrapeLiveSubjectImages(`${f.name} food`, dest, "food", 2, signal), 5000, []);
+      const live = await withTimeout(scrapeLiveSubjectImages(`${f.name} food`, f.location || dest, "food", 2, signal), 5000, []);
       if (live.length > 0) return live;
     } catch {
       // fallback
@@ -545,13 +571,17 @@ export async function investigate(
   emit({ agent: "daydreamer", phase: "working", status: "Scouting single-session activities & verified photos" });
   const expSourceIds = uniq(experiencePages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 3);
   const expImages = await mapLimited(extractedExperiences, 4, async (e) => {
+    let raw: MediaImage[] = [];
     try {
-      const live = await withTimeout(scrapeLiveSubjectImages(e.name, dest, "attraction", 2, signal), 5000, []);
-      if (live.length > 0) return live;
+      const live = await withTimeout(scrapeLiveSubjectImages(e.name, e.location || dest, "attraction", 2, signal), 5000, []);
+      if (live.length > 0) raw = live;
     } catch {
-      // fallback
+      // fallback below
     }
-    return [getCuratedExperienceImage(e.category ?? "tour", e.name)];
+    if (raw.length === 0) raw = [getCuratedExperienceImage(e.category ?? "tour", e.name)];
+    // MIDDLEMAN: verify & silently heal experience photos (same as places/hotels)
+    const healed = await healCandidateImages(raw, e.name, e.location || dest, "attraction", signal);
+    return healed.length > 0 ? healed : [getCuratedExperienceImage(e.category ?? "tour", e.name)];
   });
 
   const experiences: Experience[] = extractedExperiences.map((e, i) => {
@@ -626,7 +656,12 @@ export async function investigate(
       gateway,
       hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape", primaryHub, primaryHub).url,
       bestSeason: overview.bestSeason ?? "Year-round",
-      facts: overview.facts ?? [],
+      // Middleman: surface known closures alongside facts so they're visible
+      facts: [...(overview.facts ?? []), ...(canonical.knownClosures ?? [])],
+      // Middleman disambiguation/geofence carried into the dataset
+      canonicalOf: canonical.name !== dest ? canonical.name : undefined,
+      knownClosures: canonical.knownClosures,
+      geofence,
     },
     places,
     videos,
@@ -834,7 +869,7 @@ export async function refineHotels(
       } as ReviewIntel;
     }),
     mapLimited(extracted, 4, async (h) => {
-      const live = await scrapeLiveSubjectImages(h.name, destination, "room", 3, signal).catch(() => []);
+      const live = await scrapeLiveSubjectImages(h.name, h.location || destination, "room", 3, signal).catch(() => []);
       return live.map((im) => im.url);
     }),
   ]);
@@ -972,54 +1007,20 @@ function isMidCostDestination(dest: string): boolean {
 }
 
 function estimatePrice(dest: string, tier?: string, index: number = 0): number {
-  const reg = getDestinationRegion(dest);
-  if (reg === "western_europe_uk" || reg === "north_america_oceania") {
-    if (tier === "economical") {
-      const budgetLadder = [5800, 7500, 9800, 12500];
-      return budgetLadder[index % budgetLadder.length];
-    }
-    if (tier === "premium") {
-      const premLadder = [38000, 52000, 68000, 85000];
-      return premLadder[index % premLadder.length];
-    }
-    const modLadder = [14500, 18500, 24000, 32000];
-    return modLadder[index % modLadder.length];
-  }
-  if (reg === "japan_east_asia" || reg === "middle_east") {
-    if (tier === "economical") {
-      const budgetLadder = [3500, 4800, 6500, 8500];
-      return budgetLadder[index % budgetLadder.length];
-    }
-    if (tier === "premium") {
-      const premLadder = [28000, 38000, 52000];
-      return premLadder[index % premLadder.length];
-    }
-    const modLadder = [11500, 15500, 21000, 28000];
-    return modLadder[index % modLadder.length];
-  }
-  if (reg === "southeast_asia" || reg === "latin_america") {
-    if (tier === "economical") {
-      const budgetLadder = [1600, 2400, 3500, 4800];
-      return budgetLadder[index % budgetLadder.length];
-    }
-    if (tier === "premium") {
-      const premLadder = [16000, 24000, 36000];
-      return premLadder[index % premLadder.length];
-    }
-    const modLadder = [4500, 7500, 12000, 18000];
-    return modLadder[index % modLadder.length];
-  }
-  // India domestic default
+  const profile = getRegionalSpendingProfile(dest);
   if (tier === "economical") {
-    const budgetLadder = [1200, 1800, 2800, 3800];
-    return budgetLadder[index % budgetLadder.length];
+    return profile.ladderBudget[index % profile.ladderBudget.length];
   }
   if (tier === "premium") {
-    const premLadder = [14500, 22000, 35000];
-    return premLadder[index % premLadder.length];
+    return profile.ladderPremium[index % profile.ladderPremium.length];
   }
-  const modLadder = [3500, 5800, 8500, 12500];
-  return modLadder[index % modLadder.length];
+  // Balanced / default: use a balanced combination starting with sweet-spot budget options
+  const balancedCombined = [
+    profile.ladderBudget[1] ?? profile.budgetSweetSpotINR,
+    profile.ladderBudget[2] ?? profile.budgetSweetSpotINR,
+    ...profile.ladderBalanced,
+  ];
+  return balancedCombined[index % balancedCombined.length];
 }
 
 const BROAD_DESTINATIONS = /^(india|france|italy|spain|japan|thailand|indonesia|usa|united states|america|germany|switzerland|nepal|bhutan|sri lanka|vietnam|greece|portugal|australia|canada|brazil|egypt|morocco|turkey|uk|england|scotland|europe|rajasthan|kerala|himachal|himachal pradesh|uttarakhand|karnataka|goa|ladakh|kashmir|northeast india|south india|north india)$/i;
@@ -1112,15 +1113,17 @@ function saneExperiencePrice(
 
 /** Guard against garbage prices with destination market tiers. */
 function sanePrice(price: number | undefined, dest: string, tier?: string, index: number = 0): number {
+  const profile = getRegionalSpendingProfile(dest);
   if (price == null || price <= 0) return estimatePrice(dest, tier, index);
-  // Unconverted foreign currency in USD ($15 to $300/night)
-  if (price > 0 && price <= 300 && isHighCostDestination(dest)) {
-    return Math.round(price * 87);
+  // Unconverted foreign currency in USD/EUR/GBP ($15 to $50/night)
+  if (price > 0 && price <= 50 && profile.regionKey === "western_europe_nordics_us") {
+    return Math.round(price * profile.fxToINR);
   }
-  if (price > 0 && price <= 100 && isMidCostDestination(dest)) {
-    return Math.round(price * 87);
+  if (price > 0 && price <= 30 && profile.regionKey === "southeast_asia") {
+    return Math.round(price * profile.fxToINR);
   }
-  if (price < 600) return estimatePrice(dest, tier, index);
+  // If price is unrealistically low for any commercial lodging (< 400 INR)
+  if (price < 400) return estimatePrice(dest, tier, index);
   if (price > 400000) return estimatePrice(dest, tier, index);
   return Math.round(price);
 }
@@ -1363,7 +1366,329 @@ async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T, i: numb
 }
 
 function getGuaranteedCuratedPlaces(dest: string): ExtractedPlace[] {
-  const d = dest.toLowerCase();
+  const cleanDest = cleanDestinationName(dest);
+  const d = cleanDest.toLowerCase();
+
+  if (d.includes("copenhagen") || d.includes("denmark")) {
+    return [
+      {
+        name: "Nyhavn Waterfront & Canal",
+        altNames: ["Nyhavn"],
+        category: "core",
+        blurb: "Iconic 17th-century waterfront lined with colorful townhouses, historic wooden ships, and lively canal cafes.",
+        description: "The postcard-perfect visual centerpiece of Copenhagen, once home to Hans Christian Andersen.",
+        durationHours: 2.5,
+        distanceKm: 1,
+        travelTime: "10 min",
+        bestTime: "Afternoon & Sunset",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Hans Christian Andersen lived at No. 18, 20 & 67", "Departure point for classic canal boat tours"],
+      },
+      {
+        name: "Tivoli Gardens",
+        altNames: ["Københavns Tivoli"],
+        category: "core",
+        blurb: "Historic 1843 amusement park and fairy-tale pleasure garden featuring vintage wooden coasters and illuminated pavilions.",
+        description: "The world's second-oldest operating amusement park, inspiring Walt Disney's Disneyland.",
+        durationHours: 3.5,
+        distanceKm: 0.5,
+        travelTime: "5 min",
+        bestTime: "Late Afternoon & Evening",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Opened in 1843 by Georg Carstensen", "Features over 100,000 custom garden lights"],
+      },
+      {
+        name: "Amalienborg Palace & Marble Church",
+        altNames: ["Amalienborg Slot"],
+        category: "core",
+        blurb: "Royal winter residence of the Danish Monarchy set around an octagonal cobblestone courtyard with Royal Guard changing ceremony.",
+        description: "Four identical classicist palaces flanking the equestrian statue of King Frederik V with Frederik's Church in the background.",
+        durationHours: 2,
+        distanceKm: 2,
+        travelTime: "15 min",
+        bestTime: "11:30 AM (for 12:00 Guard Change)",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Changing of the Royal Life Guard daily at noon", "Official residence of King Frederik X"],
+      },
+      {
+        name: "Rosenborg Castle & King's Garden",
+        altNames: ["Rosenborg Slot", "Kongens Have"],
+        category: "core",
+        blurb: "Renaissance castle built by Christian IV housing the Danish Crown Jewels and royal coronation thrones.",
+        description: "Set in Copenhagen's most popular royal park, surrounded by renaissance rose gardens and moat.",
+        durationHours: 2.5,
+        distanceKm: 1.5,
+        travelTime: "12 min",
+        bestTime: "Morning",
+        difficulty: "easy",
+        accessible: "partial",
+        permitRequired: false,
+        facts: ["Vault holds the Danish Crown Jewels", "Built in Dutch Renaissance style in 1606"],
+      },
+      {
+        name: "The Little Mermaid & Kastellet",
+        altNames: ["Den Lille Havfrue", "Kastellet Fortress"],
+        category: "enroute",
+        blurb: "Iconic 1913 bronze sculpture perched on granite rock alongside the star-shaped 17th-century Kastellet citadel.",
+        description: "A tranquil coastal stroll along Langelinie promenade leading into preserved historic military ramparts with a working windmill.",
+        durationHours: 2,
+        distanceKm: 3,
+        travelTime: "20 min",
+        bestTime: "Early Morning",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Sculpted by Edvard Eriksen in 1913", "Kastellet is one of Northern Europe's best-preserved star fortresses"],
+      },
+    ];
+  }
+
+  if (d.includes("oslo") || (d.includes("norway") && !d.includes("bergen"))) {
+    return [
+      {
+        name: "Operahuset (Oslo Opera House)",
+        altNames: ["Oslo Opera"],
+        category: "core",
+        blurb: "Modernist Italian Carrara marble building designed with a sloping white roof allowing visitors to walk from fjord waters up to panoramic city views.",
+        description: "Award-winning Snøhetta architectural masterpiece rising dramatically from Oslofjord in the Bjørvika waterfront district.",
+        durationHours: 2,
+        distanceKm: 0.5,
+        travelTime: "5 min",
+        bestTime: "Afternoon & Sunset",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Designed by Snøhetta with 36,000 custom marble tiles", "Visitors can walk right up onto the roof"],
+      },
+      {
+        name: "Vigeland Sculpture Park",
+        altNames: ["Vigelandsparken", "Frogner Park"],
+        category: "core",
+        blurb: "The world's largest sculpture park made by a single artist, showcasing 212 bronze and granite figures of the human condition.",
+        description: "Gustav Vigeland's life work set across 80 rolling acres in Frogner Park, centered around the soaring 14-meter Monolith.",
+        durationHours: 2.5,
+        distanceKm: 3.5,
+        travelTime: "15 min tram",
+        bestTime: "Morning or Late Afternoon",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Contains 212 sculptures with over 600 human figures", "The Monolith is carved from a single 280-ton granite block"],
+      },
+      {
+        name: "Akershus Fortress & Castle",
+        altNames: ["Akershus Festning"],
+        category: "core",
+        blurb: "Medieval stone fortress and renaissance royal castle dating to 1299 overlooking Oslo harbour and fjord islands.",
+        description: "Strategic military complex that successfully withstood all historical sieges, offering tranquil cobblestone pathways and fjord viewpoints.",
+        durationHours: 2,
+        distanceKm: 1.2,
+        travelTime: "10 min",
+        bestTime: "Midday",
+        difficulty: "easy",
+        accessible: "partial",
+        permitRequired: false,
+        facts: ["Built in 1299 by King Håkon V", "Used as the backdrop for royal state banquets"],
+      },
+      {
+        name: "MUNCH Museum",
+        altNames: ["Munchmuseet"],
+        category: "core",
+        blurb: "Striking 13-story waterfront tower housing the world's largest collection of Edvard Munch's masterpieces including The Scream.",
+        description: "Dynamic art institution showcasing Munch's expressionist legacy with three rotating original versions of 'The Scream'.",
+        durationHours: 3,
+        distanceKm: 1,
+        travelTime: "8 min",
+        bestTime: "Morning",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Houses 28,000+ artworks by Edvard Munch", "Features three distinct versions of 'The Scream'"],
+      },
+      {
+        name: "Fram Polar Ship Museum",
+        altNames: ["Frammuseet Bygdøy"],
+        category: "adventure",
+        blurb: "Maritime museum encasing the legendary wooden polar ship Fram, used by Nansen, Amundsen, and Sverdrup in Arctic and Antarctic expeditions.",
+        description: "Step directly on board the world's strongest wooden polar exploration vessel preserved in its original state on the Bygdøy peninsula.",
+        durationHours: 2.5,
+        distanceKm: 6,
+        travelTime: "15 min ferry from City Hall",
+        bestTime: "Morning",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["The ship that sailed furthest north and south on Earth", "Original cabins and engine room fully accessible"],
+      },
+    ];
+  }
+
+  if (d.includes("stockholm") || d.includes("sweden")) {
+    return [
+      {
+        name: "Gamla Stan (Stockholm Old Town)",
+        altNames: ["Gamla Stan", "Stortorget"],
+        category: "core",
+        blurb: "One of Europe's best preserved medieval city centers with vibrant ochre townhouses, cobbled alleys, and the historic Stortorget square.",
+        description: "Founded in 1252, Gamla Stan is the living heart of Stockholm featuring the Royal Palace, Stockholm Cathedral, and artisan cafes.",
+        durationHours: 3,
+        distanceKm: 0.8,
+        travelTime: "8 min",
+        bestTime: "Morning & Afternoon",
+        difficulty: "easy",
+        accessible: "partial",
+        permitRequired: false,
+        facts: ["Site of the 1520 Stockholm Bloodbath", "Narrowest street Mårten Trotzigs Gränd is just 90cm wide"],
+      },
+      {
+        name: "Vasa Museum",
+        altNames: ["Vasamuseet"],
+        category: "core",
+        blurb: "World-famous maritime museum showcasing the almost fully intact 64-gun royal warship Vasa that sank on its maiden voyage in 1628.",
+        description: "Salvaged after 333 years beneath Baltic mud, the Vasa is 98% original wood with hundreds of hand-carved baroque sculptures.",
+        durationHours: 2.5,
+        distanceKm: 2.5,
+        travelTime: "15 min tram/ferry",
+        bestTime: "Morning",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["The only intact 17th-century ship on Earth", "Preserved by the brackish, low-oxygen Baltic Sea waters"],
+      },
+      {
+        name: "Stockholm Royal Palace",
+        altNames: ["Kungliga Slottet"],
+        category: "core",
+        blurb: "Official residence of the King of Sweden with over 600 Baroque rooms, Royal Armory, and Treasury.",
+        description: "One of the largest royal palaces in Europe, built in the Roman Baroque style with the daily changing of the guard.",
+        durationHours: 2.5,
+        distanceKm: 1,
+        travelTime: "10 min",
+        bestTime: "11:45 AM (for 12:15 Guard Parade)",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Contains 608 rooms across 11 floors", "Treasury displays the regalia of Swedish kings"],
+      },
+      {
+        name: "Skansen Open-Air Museum",
+        altNames: ["Skansen Djurgården"],
+        category: "adventure",
+        blurb: "The world's oldest open-air museum showcasing five centuries of Swedish heritage, traditional farmsteads, glassblowing, and Nordic wildlife.",
+        description: "Spanning 75 wooded acres on Djurgården island, featuring historic homes dismantled and transported from across Sweden.",
+        durationHours: 3.5,
+        distanceKm: 3.2,
+        travelTime: "18 min tram",
+        bestTime: "Midday",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Founded in 1891 by Artur Hazelius", "Home to brown bears, moose, lynx, and wolves"],
+      },
+      {
+        name: "Monteliusvägen & Södermalm Panorama",
+        altNames: ["Monteliusvägen"],
+        category: "enroute",
+        blurb: "Stunning 500-meter scenic cliffside footpath offering iconic panoramas of Lake Mälaren, City Hall, and Riddarholmen island.",
+        description: "A peaceful historic timber-lined boardwalk overlooking Stockholm's waterways, loved by photographers during sunset and golden hour.",
+        durationHours: 1.5,
+        distanceKm: 2,
+        travelTime: "12 min",
+        bestTime: "Sunset",
+        difficulty: "easy",
+        accessible: "partial",
+        permitRequired: false,
+        facts: ["Best panoramic photo location in Stockholm", "Overlooks Stockholm City Hall where Nobel banquets occur"],
+      },
+    ];
+  }
+
+  if (d.includes("bergen")) {
+    return [
+      {
+        name: "Bryggen UNESCO Hanseatic Wharf",
+        altNames: ["Bryggen", "Tyskebryggen"],
+        category: "core",
+        blurb: "Iconic UNESCO World Heritage row of colorful timber commercial buildings established by Hanseatic merchants in the 14th century.",
+        description: "Historic wooden merchant trading hub set along the Vågen harbour with narrow passageways, artisan studios, and wooden workshops.",
+        durationHours: 2.5,
+        distanceKm: 0.5,
+        travelTime: "5 min",
+        bestTime: "Morning & Late Afternoon",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["UNESCO World Heritage site since 1979", "Hanseatic League trade center for dried stockfish from northern Norway"],
+      },
+      {
+        name: "Fløibanen Funicular & Mount Fløyen",
+        altNames: ["Fløyen", "Fløibanen"],
+        category: "core",
+        blurb: "Scenic 6-minute funicular railway ascending 320 meters above Bergen for sweeping panoramic views of the city, fjords, and North Sea islands.",
+        description: "Perched atop Mount Fløyen with panoramic viewing platforms, forest hiking trails, mountain goats, and Lake Skomakerdiket.",
+        durationHours: 3,
+        distanceKm: 0.3,
+        travelTime: "6 min funicular",
+        bestTime: "Morning or Sunset",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Operational since 1918", "Overlooks the 7 mountains surrounding Bergen"],
+      },
+      {
+        name: "Bergen Fish Market (Fisketorget)",
+        altNames: ["Fisketorget i Bergen"],
+        category: "core",
+        blurb: "Historic open-air harbour market operating since 1276, serving King Crab, Norwegian smoked salmon, shrimp baguettes, and fresh oysters.",
+        description: "Vibrant maritime gathering spot located right on the harbour basin between Bryggen and the city center.",
+        durationHours: 1.5,
+        distanceKm: 0.2,
+        travelTime: "3 min",
+        bestTime: "Lunchtime (12:00 - 15:00)",
+        difficulty: "easy",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Centuries-old meeting point for fishermen and locals", "Indoor Mathallen hall offers year-round heated dining"],
+      },
+      {
+        name: "Mount Ulriken Cable Car (Ulriksbanen)",
+        altNames: ["Ulriken"],
+        category: "adventure",
+        blurb: "Cable car ascending to the highest of Bergen's seven mountains at 643 meters with breathtaking vistas of the western archipelago.",
+        description: "Dramatic mountain summit offering the legendary Vidden ridge trek across to Mount Fløyen, ziplining, and a scenic mountaintop cafe.",
+        durationHours: 3,
+        distanceKm: 5,
+        travelTime: "15 min bus + 5 min cable car",
+        bestTime: "Clear Afternoon",
+        difficulty: "moderate",
+        accessible: "yes",
+        permitRequired: false,
+        facts: ["Highest of Bergen's 7 mountains at 643m", "Starting point for the famous 5-hour Vidden plateau hike"],
+      },
+      {
+        name: "Håkon's Hall & Rosenkrantz Tower",
+        altNames: ["Bergenhus Festning"],
+        category: "enroute",
+        blurb: "13th-century medieval stone royal banquet hall built by King Håkon Håkonsson alongside a Renaissance fortified tower.",
+        description: "The royal seat of power when Bergen was Norway's medieval capital, hosting royal weddings and coronation councils.",
+        durationHours: 2,
+        distanceKm: 1,
+        travelTime: "10 min",
+        bestTime: "Morning",
+        difficulty: "easy",
+        accessible: "partial",
+        permitRequired: false,
+        facts: ["Built between 1247 and 1261 for King Magnus Lagabøte's wedding", "Norway's largest remaining secular medieval building"],
+      },
+    ];
+  }
+
   if (d.includes("ladakh") || d.includes("leh")) {
     return [
       {
@@ -1441,62 +1766,17 @@ function getGuaranteedCuratedPlaces(dest: string): ExtractedPlace[] {
         permitRequired: false,
         facts: ["Built in 1991 by Japanese Buddhists", "Unobstructed views of Namgyal Tsemo"],
       },
-      {
-        name: "Magnetic Hill & Indus-Zanskar Sangam",
-        altNames: ["Magnetic Hill", "Sangam"],
-        category: "enroute",
-        blurb: "The sacred confluence of Indus and Zanskar rivers and the famous gravity-defying optical illusion hill.",
-        description: "Located along the Leh-Srinagar Highway, witness the turquoise Indus merge with the muddy Zanskar alongside the famous Magnetic Hill.",
-        durationHours: 2,
-        distanceKm: 35,
-        travelTime: "40 min from Leh",
-        bestTime: "Afternoon",
-        difficulty: "easy",
-        accessible: "yes",
-        permitRequired: false,
-        facts: ["Optical illusion pulls cars uphill", "River rafting confluence hub"],
-      },
-      {
-        name: "Tso Moriri Lake",
-        altNames: ["Lake Moriri"],
-        category: "adventure",
-        blurb: "Remote, pristine high-altitude wetland sanctuary surrounded by snow-capped peaks in Changthang.",
-        description: "Less commercialized than Pangong, this protected Ramsar site is home to black-necked cranes and Tibetan wild asses (Kiang).",
-        durationHours: 4,
-        distanceKm: 220,
-        travelTime: "6 hrs from Leh",
-        bestTime: "Morning",
-        difficulty: "moderate",
-        accessible: "partial",
-        permitRequired: true,
-        facts: ["High-altitude wetland reserve at 14,836 ft", "Sacred to Changpa nomads"],
-      },
-      {
-        name: "Hemis Monastery & Museum",
-        altNames: ["Hemis Gompa"],
-        category: "core",
-        blurb: "Ladakh's wealthiest and largest Buddhist monastery, renowned for its annual masked dance festival.",
-        description: "A Drukpa lineage monastery tucked into a secluded mountain gorge, housing ancient gold thangkas and rare relics.",
-        durationHours: 2,
-        distanceKm: 45,
-        travelTime: "1 hr from Leh",
-        bestTime: "Morning",
-        difficulty: "easy",
-        accessible: "yes",
-        permitRequired: false,
-        facts: ["Home to the Hemis Tsechu festival", "Ancient museum of Buddhist relics"],
-      },
     ];
   }
 
-  // Generic fallback for any destination
+  // Generic fallback for any global destination
   return [
     {
-      name: `${dest} Historic Old Town & Heritage Hub`,
-      altNames: [`Central ${dest}`],
+      name: cleanDest ? `${cleanDest} Historic Old Town & Heritage Hub` : "Historic Old Town & Heritage Hub",
+      altNames: [cleanDest ? `Central ${cleanDest}` : "Historic Center"],
       category: "core",
-      blurb: `The historic and cultural center of ${dest}, filled with local architecture, lively squares, and landmark sights.`,
-      description: `A walkable core showcasing the character, history, and vibrant local life of ${dest}.`,
+      blurb: `The historic and cultural center of ${cleanDest || "the city"}, filled with local architecture, lively squares, and landmark sights.`,
+      description: `A walkable core showcasing the character, history, and vibrant local life of ${cleanDest || "the destination"}.`,
       durationHours: 3,
       distanceKm: 1,
       travelTime: "10 min",
@@ -1504,13 +1784,13 @@ function getGuaranteedCuratedPlaces(dest: string): ExtractedPlace[] {
       difficulty: "easy",
       accessible: "yes",
       permitRequired: false,
-      facts: [`Cultural heart of ${dest}`, "Pedestrian-friendly streets and cafes"],
+      facts: [`Cultural heart of ${cleanDest || "the region"}`, "Pedestrian-friendly streets and cafes"],
     },
     {
-      name: `${dest} Scenic Panorama & Sunset Viewpoint`,
-      altNames: [`${dest} Viewpoint`],
+      name: cleanDest ? `${cleanDest} Scenic Panorama & Sunset Viewpoint` : "Scenic Panorama & Sunset Viewpoint",
+      altNames: ["Scenic Viewpoint"],
       category: "adventure",
-      blurb: `The premier panoramic vantage point offering breathtaking sweeping vistas across ${dest}.`,
+      blurb: `The premier panoramic vantage point offering breathtaking sweeping vistas across ${cleanDest || "the region"}.`,
       description: `A scenic high point loved by photographers for golden hour lighting and wide-angle scenery.`,
       durationHours: 2,
       distanceKm: 12,
@@ -1522,8 +1802,8 @@ function getGuaranteedCuratedPlaces(dest: string): ExtractedPlace[] {
       facts: ["Best panoramic photo spot", "Popular during sunrise and sunset"],
     },
     {
-      name: `${dest} Nature Reserve & Waterfalls`,
-      altNames: [`${dest} Nature Park`],
+      name: cleanDest ? `${cleanDest} Nature Reserve & Waterfalls` : "Nature Reserve & Walking Trails",
+      altNames: ["Nature Reserve"],
       category: "adventure",
       blurb: `Serene outdoor wilderness featuring lush green trails, freshwater streams, and scenic landscapes.`,
       description: `An easy escape into nature with forested hiking paths, clean air, and tranquil picnic areas.`,
@@ -1537,10 +1817,10 @@ function getGuaranteedCuratedPlaces(dest: string): ExtractedPlace[] {
       facts: ["Rich regional biodiversity", "Freshwater streams and trails"],
     },
     {
-      name: `${dest} Iconic Landmark & Cultural Monument`,
-      altNames: [`${dest} Heritage Site`],
+      name: cleanDest ? `${cleanDest} Iconic Landmark & Cultural Monument` : "Iconic Architectural Landmark",
+      altNames: ["Cultural Monument"],
       category: "core",
-      blurb: `The most celebrated architectural and cultural monument defining the identity of ${dest}.`,
+      blurb: `The most celebrated architectural and cultural monument defining the identity of ${cleanDest || "the area"}.`,
       description: `A must-see historical monument with intricate craftsmanship and centuries of heritage.`,
       durationHours: 2,
       distanceKm: 5,
@@ -1551,42 +1831,272 @@ function getGuaranteedCuratedPlaces(dest: string): ExtractedPlace[] {
       permitRequired: false,
       facts: ["Top rated landmark in the region", "Architectural highlight"],
     },
-    {
-      name: `${dest} Waterfront Promenade & Coastal Trail`,
-      altNames: [`${dest} Waterfront`],
-      category: "core",
-      blurb: `Picturesque promenade perfect for leisurely walks, water views, and breezy evening relaxation.`,
-      description: `A vibrant stretch connecting scenic lookouts, water activities, and seaside/riverside cafes.`,
-      durationHours: 2,
-      distanceKm: 4,
-      travelTime: "10 min",
-      bestTime: "Evening",
-      difficulty: "easy",
-      accessible: "yes",
-      permitRequired: false,
-      facts: ["Scenic waterfront pathway", "Great dining along the promenade"],
-    },
-    {
-      name: `${dest} Artisan Bazaar & Street Market`,
-      altNames: [`${dest} Local Market`],
-      category: "enroute",
-      blurb: `Vibrant local market for authentic souvenirs, handmade crafts, spices, and street food.`,
-      description: `An immersive sensory experience exploring traditional wares, local snacks, and artisan stalls.`,
-      durationHours: 2,
-      distanceKm: 2,
-      travelTime: "5 min",
-      bestTime: "Late Afternoon",
-      difficulty: "easy",
-      accessible: "yes",
-      permitRequired: false,
-      facts: ["Authentic handicrafts and local produce", "Friendly local vendors"],
-    },
   ];
 }
 
 function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
-  const d = dest.toLowerCase();
-  if (d.includes("japan") || d.includes("tokyo") || d.includes("kyoto") || d.includes("osaka") || d.includes("hakone")) {
+  const cleanDest = cleanDestinationName(dest);
+  const d = cleanDest.toLowerCase();
+
+  if (d.includes("copenhagen") || d.includes("denmark")) {
+    return [
+      {
+        name: "Generator Copenhagen",
+        location: "Kongens Nytorv, Copenhagen",
+        room: "Private Ensuite King Room",
+        pricePerNight: 5800,
+        cleanliness: 9.2,
+        bathroomScore: 9.0,
+        amenities: ["Free High-Speed Wi-Fi", "Petanque Rooftop Bar", "Private En-Suite Shower", "24/7 Reception", "Luggage Storage"],
+        policies: ["Free cancellation up to 24h", "Check-in: 2:00 PM"],
+        hasElevator: true,
+        overallRating: 4.65,
+        reviewCount: 2400,
+        whyReasons: ["Design-led boutique hostel with private ensuite rooms steps from Nyhavn", "Vibrant social lounge and rooftop petanque bar", "High value accommodation in central Copenhagen"],
+      },
+      {
+        name: "CitizenM Copenhagen Rådhuspladsen",
+        location: "City Hall Square (Rådhuspladsen), Copenhagen",
+        room: "Citizen King Room with City View",
+        pricePerNight: 16500,
+        cleanliness: 9.6,
+        bathroomScore: 9.4,
+        amenities: ["MoodPad In-Room Tablet Control", "Rainfall Power Shower", "CanteenM 24/7 Bar", "Super King Bed", "Living Room Lobby"],
+        policies: ["Free cancellation up to 48h", "24/7 self check-in"],
+        hasElevator: true,
+        overallRating: 4.82,
+        reviewCount: 3100,
+        whyReasons: ["Directly on City Hall Square with floor-to-ceiling city views", "Smart tablet automation for lighting, blinds, and entertainment", "Soundproofed modern design for deep rest"],
+      },
+      {
+        name: "Radisson Collection Royal Hotel Copenhagen",
+        location: "Vesterbro / Tivoli, Copenhagen",
+        room: "Collection Superior Room (Arne Jacobsen Heritage)",
+        pricePerNight: 24000,
+        cleanliness: 9.7,
+        bathroomScore: 9.5,
+        amenities: ["Arne Jacobsen Design Furniture", "Panoramic Tivoli Views", "ISSEI Fusion Dining", "State-of-the-Art Fitness Center"],
+        policies: ["Free cancellation up to 48h", "Danish organic breakfast available"],
+        hasElevator: true,
+        overallRating: 4.88,
+        reviewCount: 1950,
+        whyReasons: ["The world's first design hotel created by master architect Arne Jacobsen", "Facing Tivoli Gardens and Central Station", "Iconic mid-century Danish furniture design and luxury service"],
+      },
+      {
+        name: "Villa Copenhagen",
+        location: "Tietgensgade / Central Station, Copenhagen",
+        room: "Deluxe King Room",
+        pricePerNight: 27500,
+        cleanliness: 9.7,
+        bathroomScore: 9.6,
+        amenities: ["Rooftop Heated Sustainable Lap Pool", "Kontrast Brasserie", "Bakery Rug", "Courtyard Atrium Lounge"],
+        policies: ["Free cancellation up to 72h", "Organic artisan breakfast included"],
+        hasElevator: true,
+        overallRating: 4.9,
+        reviewCount: 2150,
+        whyReasons: ["Set inside the grand 1912 Danish Central Post Building", "Stunning outdoor rooftop heated pool overlooking the city", "Conscious luxury and sustainable gastronomy"],
+      },
+      {
+        name: "Nimb Hotel (Tivoli Gardens)",
+        location: "Bernstorffsgade, Tivoli Gardens, Copenhagen",
+        room: "Nimb Luxury Suite with Fireplace",
+        pricePerNight: 55000,
+        cleanliness: 9.9,
+        bathroomScore: 9.9,
+        amenities: ["Rooftop Infinity Pool & Bar", "Fireplace in Suite", "Complimentary Tivoli Gardens Access", "Nimb Wellness Spa"],
+        policies: ["Free cancellation up to 7 days", "Artisan Danish breakfast & butler luggage service included"],
+        hasElevator: true,
+        overallRating: 4.98,
+        reviewCount: 680,
+        whyReasons: ["Moorish fairy-tale palace located directly inside Tivoli Gardens", "Every suite overlooks the magical illuminated garden rides", "Heated rooftop emerald pool and Michelin-level private dining"],
+      },
+    ];
+  }
+
+  if (d.includes("oslo") || (d.includes("norway") && !d.includes("bergen"))) {
+    return [
+      {
+        name: "Citybox Oslo",
+        location: "Prinsens Gate (Karl Johan), Oslo",
+        room: "Standard Double Room",
+        pricePerNight: 6500,
+        cleanliness: 9.3,
+        bathroomScore: 9.1,
+        amenities: ["Free High-Speed Wi-Fi", "Modern Private Shower", "Self Check-in Terminals", "Guest Kitchenette", "Lounge"],
+        policies: ["Free cancellation up to 24h", "Express check-in/out"],
+        hasElevator: true,
+        overallRating: 4.65,
+        reviewCount: 3800,
+        whyReasons: ["Spotless Scandinavian minimalist comfort 3 minutes from Oslo Central Station", "High value hotel with private modern ensuite bathrooms", "Walkable to Opera House, Karl Johans Gate, and Bjørvika"],
+      },
+      {
+        name: "Clarion Hotel The Hub",
+        location: "Biskop Gunnerus Gate (Jernbanetorget), Oslo",
+        room: "Superior Double Room with City View",
+        pricePerNight: 17500,
+        cleanliness: 9.5,
+        bathroomScore: 9.4,
+        amenities: ["Rooftop Farm & Restaurant Norda", "Indoor Swimming Pool & Sauna", "Organic Breakfast Buffet", "Calypso Fitness"],
+        policies: ["Free cancellation up to 48h", "Award-winning organic breakfast included"],
+        hasElevator: true,
+        overallRating: 4.8,
+        reviewCount: 3400,
+        whyReasons: ["Oslo's premier eco-friendly landmark next to Central Station", "Spectacular rooftop dining serving organic herbs grown on the hotel roof", "Heated indoor pool and relaxation steam rooms"],
+      },
+      {
+        name: "Grand Hotel Oslo",
+        location: "Karl Johans Gate, Oslo",
+        room: "Premium Heritage King Room",
+        pricePerNight: 29500,
+        cleanliness: 9.7,
+        bathroomScore: 9.6,
+        amenities: ["Artesia Spa & Heated Pool", "Eight Rooftop Cocktail Bar", "Grand Café (Ibsen's haunt)", "24/7 Concierge"],
+        policies: ["Free cancellation up to 48h", "Full Norwegian buffet breakfast included"],
+        hasElevator: true,
+        overallRating: 4.88,
+        reviewCount: 2200,
+        whyReasons: ["Norway's most legendary heritage luxury address on Karl Johans Gate", "Host of the annual Nobel Peace Prize laureates banquet", "World-class Artesia Spa and panoramic rooftop cocktail lounge"],
+      },
+      {
+        name: "The Thief (Tjuvholmen)",
+        location: "Landgangen, Tjuvholmen Waterfront, Oslo",
+        room: "Deluxe Fjord View Room",
+        pricePerNight: 34000,
+        cleanliness: 9.8,
+        bathroomScore: 9.7,
+        amenities: ["The Thief Spa & Turkish Hamam", "Rooftop Fjord Bar", "Curated Art Collection", "Private Balcony"],
+        policies: ["Free cancellation up to 72h", "Champagne breakfast included"],
+        hasElevator: true,
+        overallRating: 4.92,
+        reviewCount: 1650,
+        whyReasons: ["Set on the stylish arts islet of Tjuvholmen overlooking Oslofjord", "Features curated original art from Andy Warhol and Damien Hirst", "Luxury Turkish hamam spa and fjord-facing rooftop lounge"],
+      },
+    ];
+  }
+
+  if (d.includes("stockholm") || d.includes("sweden")) {
+    return [
+      {
+        name: "Generator Stockholm",
+        location: "Torsgatan (Norrmalm), Stockholm",
+        room: "Private Ensuite King Room",
+        pricePerNight: 5200,
+        cleanliness: 9.1,
+        bathroomScore: 8.9,
+        amenities: ["Free High-Speed Wi-Fi", "Bar Hilma (Nordic Cocktails)", "Design Lounge", "Private Bathroom", "24/7 Desk"],
+        policies: ["Free cancellation up to 24h", "Luggage storage available"],
+        hasElevator: true,
+        overallRating: 4.6,
+        reviewCount: 2900,
+        whyReasons: ["Contemporary Scandinavian lifestyle stay in vibrant Norrmalm", "Clean private ensuite rooms at an accessible rate", "Minutes from Stockholm Central Station and Arlanda Express"],
+      },
+      {
+        name: "Hobo Hotel Stockholm",
+        location: "Brunkebergstorg, Stockholm",
+        room: "Superior King with Urban View",
+        pricePerNight: 14500,
+        cleanliness: 9.5,
+        bathroomScore: 9.3,
+        amenities: ["Tak Rooftop Restaurant & Bar", "Organic Breakfast", "Pegboard Gear Rental", "Gym Access"],
+        policies: ["Free cancellation up to 48h", "Breakfast available"],
+        hasElevator: true,
+        overallRating: 4.76,
+        reviewCount: 2200,
+        whyReasons: ["Trendy boutique hotel designed by Studio Aisslinger on Brunkebergstorg", "Direct access to Tak, Stockholm's premier rooftop restaurant and sake bar", "Walkable to Gamla Stan, Kungsträdgården, and shopping districts"],
+      },
+      {
+        name: "At Six Stockholm",
+        location: "Brunkebergstorg, Stockholm",
+        room: "Deluxe King Room",
+        pricePerNight: 22000,
+        cleanliness: 9.6,
+        bathroomScore: 9.5,
+        amenities: ["Curated Contemporary Art", "Dining Room by At Six", "Listening Lounge / Wine Bar", "24/7 Gym"],
+        policies: ["Free cancellation up to 48h", "Artisan breakfast included"],
+        hasElevator: true,
+        overallRating: 4.85,
+        reviewCount: 1800,
+        whyReasons: ["Urban luxury masterpiece featuring custom artwork by Jaume Plensa and Tacita Dean", "Spacious rooms with marble bathrooms and bespoke Ruark audio", "Prime central Stockholm setting"],
+      },
+      {
+        name: "Grand Hôtel Stockholm",
+        location: "Södra Blasieholmshamnen, Stockholm",
+        room: "Royal Waterfront View Suite",
+        pricePerNight: 38000,
+        cleanliness: 9.9,
+        bathroomScore: 9.8,
+        amenities: ["Nordic Spa & Fitness (Saunas & Plunge Pools)", "Michelin-starred Mathias Dahlgren Dining", "Waterfront Royal Palace Panorama", "24/7 Concierge"],
+        policies: ["Free cancellation up to 7 days", "Full Nordic gourmet breakfast included"],
+        hasElevator: true,
+        overallRating: 4.96,
+        reviewCount: 2800,
+        whyReasons: ["Stockholm's legendary 5-star grand dame on the Blasieholmen waterfront since 1874", "Unrivalled direct views across the water to the Royal Palace and Gamla Stan", "Home of the original Swedish Smörgåsbord at the Grand Veranda"],
+      },
+    ];
+  }
+
+  if (d.includes("bergen")) {
+    return [
+      {
+        name: "Citybox Bergen",
+        location: "Nygårdsgaten / Danmarksplass, Bergen",
+        room: "Standard Double Room",
+        pricePerNight: 6200,
+        cleanliness: 9.3,
+        bathroomScore: 9.0,
+        amenities: ["Free High-Speed Wi-Fi", "Modern Ensuite Bath", "Self Check-in Kiosks", "Guest Lounge & Kitchenette"],
+        policies: ["Free cancellation up to 24h", "24/7 keycard access"],
+        hasElevator: true,
+        overallRating: 4.68,
+        reviewCount: 3100,
+        whyReasons: ["Smart budget hotel right by the Bergen Light Rail (Bybanen)", "Impeccable cleanliness and quiet modern soundproofed rooms", "Short walk to Bergen Fish Market and train station"],
+      },
+      {
+        name: "Clarion Hotel Admiral",
+        location: "C. Sundts Gate (Vågen Harbour), Bergen",
+        room: "Harbour View King Room (Bryggen Panorama)",
+        pricePerNight: 18000,
+        cleanliness: 9.5,
+        bathroomScore: 9.3,
+        amenities: ["Unobstructed Bryggen Panorama", "Kitchen & Table by Marcus Samuelsson", "Harbour Terrace", "Free Organic Breakfast"],
+        policies: ["Free cancellation up to 48h", "Organic buffet breakfast included"],
+        hasElevator: true,
+        overallRating: 4.78,
+        reviewCount: 2300,
+        whyReasons: ["Directly across the water with the finest unobstructed panorama of UNESCO Bryggen", "Enjoy breakfast on the outdoor dock overlooking the fjord ferries", "Warm Norwegian hospitality and organic culinary focus"],
+      },
+      {
+        name: "Radisson Blu Royal Hotel Bryggen",
+        location: "Bryggen Harbour, Bergen",
+        room: "Superior Room (Bryggen Heritage View)",
+        pricePerNight: 19500,
+        cleanliness: 9.5,
+        bathroomScore: 9.4,
+        amenities: ["Direct Bryggen UNESCO Location", "26 North Restaurant & Social Club", "Sauna & Fitness Center", "Super King Bed"],
+        policies: ["Free cancellation up to 48h", "Buffet breakfast included"],
+        hasElevator: true,
+        overallRating: 4.8,
+        reviewCount: 2700,
+        whyReasons: ["Integrated directly into the end of the historic UNESCO Bryggen timber wharf", "Step outside directly onto the historic cobblestone alleys and fish market", "Modern Scandinavian interiors with plush bedding and sauna access"],
+      },
+      {
+        name: "Bergen Børs Hotel",
+        location: "Vågsallmenningen (Old Stock Exchange), Bergen",
+        room: "Prestige Executive King Suite",
+        pricePerNight: 28000,
+        cleanliness: 9.8,
+        bathroomScore: 9.7,
+        amenities: ["BARE Michelin-Starred Restaurant", "Cocktail Bar in Old Chamber", "Custom Velvet & Wood Interiors", "Gym & Concierge"],
+        policies: ["Free cancellation up to 72h", "Artisan Norwegian breakfast included"],
+        hasElevator: true,
+        overallRating: 4.93,
+        reviewCount: 1450,
+        whyReasons: ["Housed in the magnificent 1862 Bergen Stock Exchange building", "Overlooks the lively fish market and harbour basin", "Home to BARE, Bergen's premier Michelin-starred dining destination"],
+      },
+    ];
+  }
+
+  if (d.includes("japan") || d.includes("tokyo") || d.includes("kyoto") || d.includes("osaka")) {
     return [
       {
         name: "Kyoto Central Ryokan & Guesthouse",
@@ -1617,20 +2127,6 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
         whyReasons: ["Spotless, ultra-modern Japanese pod hotel", "Prime location 5 minutes from Senso-ji Temple and Asakusa Station", "Superb privacy and high-speed Wi-Fi on a budget"],
       },
       {
-        name: "Piece Hostel Sanjo Kyoto",
-        location: "Nakagyo Ward, Kyoto",
-        room: "Private Double Room (Ensuite Bath)",
-        pricePerNight: 3200,
-        cleanliness: 9.6,
-        bathroomScore: 9.4,
-        amenities: ["Free Wi-Fi", "Terrace Cafe & Bar", "Guest Kitchen", "Coin Laundry", "Luggage Storage"],
-        policies: ["Free cancellation up to 48h", "Check-in from 3:00 PM"],
-        hasElevator: true,
-        overallRating: 4.85,
-        reviewCount: 1420,
-        whyReasons: ["Award-winning designer hostel with private ensuite rooms", "Steps from Nishiki Market and vibrant downtown cafes", "Immaculate cleanliness and social traveler lounge"],
-      },
-      {
         name: "Hotel Resol Kyoto Kawaramachi Sanjo",
         location: "Kawaramachi, Kyoto",
         room: "Standard Tatami Twin Room",
@@ -1643,76 +2139,6 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
         overallRating: 4.7,
         reviewCount: 980,
         whyReasons: ["Modern hotel infused with traditional Kyoto aesthetics", "Walkable to Gion geisha district and Pontocho alley dining", "Superb Japanese modern design and soundproofing"],
-      },
-      {
-        name: "Candeo Hotels Tokyo Shimbashi",
-        location: "Minato City, Tokyo",
-        room: "Executive King with Sky Spa Access",
-        pricePerNight: 7800,
-        cleanliness: 9.5,
-        bathroomScore: 9.4,
-        amenities: ["Open-Air Rooftop SkySpa", "Sauna & Hot Baths", "Simmons Luxury Beds", "Buffet Breakfast"],
-        policies: ["Free cancellation up to 48h", "Sky spa open 3:00 PM - 11:00 AM"],
-        hasElevator: true,
-        overallRating: 4.75,
-        reviewCount: 1850,
-        whyReasons: ["Open-air rooftop SkySpa with night skyline views", "Unbeatable Yamanote Line transit access at Shimbashi", "Renowned Japanese breakfast buffet and deep relaxation baths"],
-      },
-      {
-        name: "Hotel Ryumeikan Tokyo",
-        location: "Yaesu, Chuo City, Tokyo",
-        room: "Japanese Modern Deluxe Room",
-        pricePerNight: 8500,
-        cleanliness: 9.4,
-        bathroomScore: 9.2,
-        amenities: ["Free High-Speed Wi-Fi", "Top-floor Hanagoyomi Restaurant", "Air Purifier", "Deep Soaking Tub", "Concierge Service"],
-        policies: ["Free cancellation up to 48h", "Buffet breakfast available"],
-        hasElevator: true,
-        overallRating: 4.75,
-        reviewCount: 2100,
-        whyReasons: ["Over a century of Japanese hospitality next to Tokyo Station", "Modern amenities with warm Japanese aesthetics", "Quiet retreat in the vibrant heart of Tokyo"],
-      },
-      {
-        name: "Cross Hotel Osaka (Dotonbori)",
-        location: "Chuo Ward, Osaka",
-        room: "Deluxe Twin Room",
-        pricePerNight: 9500,
-        cleanliness: 9.3,
-        bathroomScore: 9.2,
-        amenities: ["Designer Bathroom with Deep Tub", "Glamorous Bar & Dining", "Free Wi-Fi", "Direct Midosuji Line access"],
-        policies: ["Free cancellation up to 48h", "Check-out at 12:00 PM"],
-        hasElevator: true,
-        overallRating: 4.7,
-        reviewCount: 1780,
-        whyReasons: ["Literally 1 minute from Glico Running Man and Dotonbori food paradise", "Spacious rooms by Japanese city standards", "Separate deep soaking bathtub and rain shower in all rooms"],
-      },
-      {
-        name: "The Celestine Kyoto Gion",
-        location: "Higashiyama Ward, Kyoto",
-        room: "Superior King with Garden View",
-        pricePerNight: 14500,
-        cleanliness: 9.6,
-        bathroomScore: 9.5,
-        amenities: ["Large Public Bath (Onsen Style)", "Yasaka Endo Tempura Dining", "Lounge with Matcha Tea", "Complimentary Shuttle"],
-        policies: ["Free cancellation up to 72h", "Japanese Breakfast included"],
-        hasElevator: true,
-        overallRating: 4.88,
-        reviewCount: 840,
-        whyReasons: ["Tranquil retreat nestled in historical Gion near Kennin-ji Temple", "Sublime Japanese garden public bath to unwind after sightseeing", "Refined Kyoto hospitality and Michelin-quality dining"],
-      },
-      {
-        name: "Hakone Kowakien Ten-yu (Hot Spring Ryokan)",
-        location: "Hakone, Kanagawa",
-        room: "Japanese-Western Room with Private Open-Air Onsen Bath",
-        pricePerNight: 22000,
-        cleanliness: 9.7,
-        bathroomScore: 9.8,
-        amenities: ["Private Open-Air Balcony Onsen", "Infinity Mountain View Hot Spring", "Kaiseki Multi-Course Dinner", "Forest Spa"],
-        policies: ["Free cancellation up to 7 days", "Traditional Kaiseki dinner & Japanese breakfast included"],
-        hasElevator: true,
-        overallRating: 4.9,
-        reviewCount: 1120,
-        whyReasons: ["Every single room features its own private open-air ceramic hot spring bath", "Infinity onsen bath overlooking Hakone mountain ridges", "Exquisite seasonal Japanese multi-course Kaiseki cuisine"],
       },
       {
         name: "Park Hyatt Tokyo",
@@ -1728,24 +2154,10 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
         reviewCount: 3200,
         whyReasons: ["Iconic 5-star landmark in Shinjuku with 360° skyline vistas", "World-renowned service and luxury amenities", "Spacious luxury rooms and 47th-floor glass-atrium pool"],
       },
-      {
-        name: "Aman Tokyo (Otemachi Landmark)",
-        location: "Otemachi, Chiyoda City, Tokyo",
-        room: "Grand Sanctuary Suite with Imperial Palace Garden View",
-        pricePerNight: 48000,
-        cleanliness: 9.9,
-        bathroomScore: 9.9,
-        amenities: ["30-meter Heated Swimming Pool", "Aman Spa & Japanese Baths", "The Lounge by Aman", "Panoramic Mt. Fuji Vistas"],
-        policies: ["Free cancellation up to 14 days", "Champagne welcome & gourmet breakfast included"],
-        hasElevator: true,
-        overallRating: 4.98,
-        reviewCount: 780,
-        whyReasons: ["The pinnacle of modern luxury hotel design in Asia", "Towering basalt rock lobby architecture inspired by Japanese paper lanterns", "Breathtaking vistas of Tokyo Skytree, Imperial Palace, and Mt. Fuji"],
-      },
     ];
   }
 
-  if (d.includes("ladakh") || d.includes("leh") || d.includes("nubra") || d.includes("pangong")) {
+  if (d.includes("ladakh") || d.includes("leh")) {
     return [
       {
         name: "Leh Old Town Guesthouse & Homestay",
@@ -1762,62 +2174,6 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
         whyReasons: ["Authentic local family homestay in historic Leh", "Unbeatable budget value with warm Ladakhi hospitality", "Solar heated 24/7 hot water and rooftop views"],
       },
       {
-        name: "Zostel Leh (Backpacker Hostel & Private Rooms)",
-        location: "Karzoo, Leh",
-        room: "Private Mountain View Deluxe Room",
-        pricePerNight: 2200,
-        cleanliness: 9.3,
-        bathroomScore: 9.0,
-        amenities: ["High-Speed Wi-Fi", "Common Room & Cafe", "24/7 Hot Water", "Bike Rental Desk"],
-        policies: ["Free cancellation up to 48h", "Luggage storage"],
-        hasElevator: false,
-        overallRating: 4.75,
-        reviewCount: 1100,
-        whyReasons: ["Vibrant traveler community hub 10 minutes from Leh Main Bazaar", "Reliable hot showers and high-altitude acclimatization tips", "Cozy wooden sun deck overlooking snow peaks"],
-      },
-      {
-        name: "Gomang Boutique Hotel",
-        location: "Upper Changspa, Leh",
-        room: "Deluxe Mountain King",
-        pricePerNight: 6800,
-        cleanliness: 9.2,
-        bathroomScore: 9.0,
-        amenities: ["Library lounge", "Solar heating", "Organic garden restaurant", "Free parking"],
-        policies: ["Free cancellation up to 24h", "Breakfast included"],
-        hasElevator: true,
-        overallRating: 4.7,
-        reviewCount: 680,
-        whyReasons: ["Quiet boutique sanctuary away from traffic", "Excellent solar heating & hot water", "Eco-friendly organic cuisine"],
-      },
-      {
-        name: "Nubra Organic Retreat & Cottages",
-        location: "Hunder, Nubra Valley",
-        room: "Luxury Swiss Cottage Tent with En-suite Bath",
-        pricePerNight: 4800,
-        cleanliness: 9.4,
-        bathroomScore: 9.1,
-        amenities: ["Organic Apple & Apricot Orchards", "Private En-Suite Bathroom", "Campfire Evenings", "Buffet Dining"],
-        policies: ["Free cancellation up to 48h", "Dinner & breakfast included"],
-        hasElevator: false,
-        overallRating: 4.75,
-        reviewCount: 540,
-        whyReasons: ["Nestled inside 4 acres of lush apricot and apple orchards", "5 minutes from Hunder Sand Dunes and Bactrian camels", "Stargazing right outside your cottage porch"],
-      },
-      {
-        name: "Pangong Sarai Camp & Cottages",
-        location: "Spangmik, Pangong Tso",
-        room: "Insulated Lakefront Wooden Cottage",
-        pricePerNight: 5500,
-        cleanliness: 9.1,
-        bathroomScore: 8.8,
-        amenities: ["Direct Lakefront Panorama", "Heated Blankets", "Attached Western Bathroom", "Dining Hall"],
-        policies: ["Free cancellation up to 72h", "Warm dinner & breakfast included"],
-        hasElevator: false,
-        overallRating: 4.65,
-        reviewCount: 460,
-        whyReasons: ["Unobstructed views of the shifting turquoise colors of Pangong Lake", "Heavy insulation and hot running water bottles for freezing nights", "Prime astrophotography spot right on the lake shoreline"],
-      },
-      {
         name: "The Grand Dragon Ladakh",
         location: "Old Road Sheynam, Leh",
         room: "Premier Heritage Room (Mountain View)",
@@ -1830,34 +2186,6 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
         overallRating: 4.8,
         reviewCount: 1450,
         whyReasons: ["Premier luxury standard in Leh", "Oxygenated rooms for high altitude comfort", "Exceptional heating and cleanliness"],
-      },
-      {
-        name: "Stok Palace Heritage Hotel",
-        location: "Stok Village, Leh",
-        room: "Royal Suite Chamber",
-        pricePerNight: 18000,
-        cleanliness: 9.4,
-        bathroomScore: 9.1,
-        amenities: ["Heritage architecture", "Heated bathrooms", "Museum access", "Royal dining"],
-        policies: ["Free cancellation up to 72h", "Breakfast & royal dinner included"],
-        hasElevator: false,
-        overallRating: 4.9,
-        reviewCount: 380,
-        whyReasons: ["Live inside an authentic 1820 royal palace", "Unrivalled Himalayan serenity", "Curated royal Ladakhi dining"],
-      },
-      {
-        name: "Chamba Camp Thiksey (Luxury Glamping)",
-        location: "Thiksey, Ladakh",
-        room: "Luxury Heated Safari Tent",
-        pricePerNight: 28000,
-        cleanliness: 9.7,
-        bathroomScore: 9.6,
-        amenities: ["Private butler", "Underfloor heating", "Luxury en-suite bathroom", "Fine dining"],
-        policies: ["Free cancellation up to 7 days", "All meals & guided excursions included"],
-        hasElevator: false,
-        overallRating: 4.95,
-        reviewCount: 220,
-        whyReasons: ["Ultimate nomadic luxury glamping", "Unobstructed views of Thiksey Monastery", "Impeccable personalized butler service"],
       },
     ];
   }
@@ -1907,109 +2235,6 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
         whyReasons: ["Step outside directly into the lively theatre and culinary heart of Covent Garden", "In-room mini kitchen allows relaxed private dining", "Ranked in top 1% for guest service in London"],
       },
       {
-        name: "Apex Temple Court Hotel",
-        location: "Fleet Street / Temple, London",
-        room: "Deluxe King Room",
-        pricePerNight: 24000,
-        cleanliness: 9.4,
-        bathroomScore: 9.2,
-        amenities: ["Walk-in Monsoon Shower & Bath", "Courtyard Wine Bar", "Gym", "Complimentary Antipodes Toiletries"],
-        policies: ["Free cancellation up to 48h", "Breakfast available"],
-        hasElevator: true,
-        overallRating: 4.72,
-        reviewCount: 1420,
-        whyReasons: ["Set around a serene historic legal courtyard away from street noise", "Walkable to both the West End and the City", "Spacious rooms with luxurious bathtub/shower setups"],
-      },
-      {
-        name: "The Balcon London (St. James)",
-        location: "St. James's, London",
-        room: "Luxury Heritage Suite",
-        pricePerNight: 38000,
-        cleanliness: 9.6,
-        bathroomScore: 9.4,
-        amenities: ["Marble Bathrooms", "Full Service Spa", "Cocktail Lounge", "Bespoke Concierge"],
-        policies: ["Free cancellation up to 72h", "Artisan breakfast included"],
-        hasElevator: true,
-        overallRating: 4.85,
-        reviewCount: 920,
-        whyReasons: ["Sophisticated British elegance near Buckingham Palace and Piccadilly", "Michelin-recommended dining on site", "Opulent marble bathrooms and five-star service"],
-      },
-      {
-        name: "The Savoy London",
-        location: "Strand / Thames Embankment, London",
-        room: "Deluxe River View Suite",
-        pricePerNight: 68000,
-        cleanliness: 9.9,
-        bathroomScore: 9.8,
-        amenities: ["Dedicated 24-Hour Butler", "Panoramic Thames Views", "Art Deco Bathrooms", "Indoor Heated Pool & Spa"],
-        policies: ["Free cancellation up to 7 days", "Champagne arrival & butler unpacking"],
-        hasElevator: true,
-        overallRating: 4.95,
-        reviewCount: 2800,
-        whyReasons: ["The world's most iconic luxury hotel address on the River Thames", "Legendary British heritage with Gordon Ramsay dining", "Bespoke butler service and world-renowned cocktail lounge"],
-      },
-    ];
-  }
-
-  if (d.includes("edinburgh")) {
-    return [
-      {
-        name: "Code Pod Hostels - THE Court",
-        location: "Royal Mile, Edinburgh",
-        room: "Private Ensuite Double Studio",
-        pricePerNight: 5200,
-        cleanliness: 9.2,
-        bathroomScore: 9.0,
-        amenities: ["Direct Royal Mile Location", "High-Speed WiFi", "Ensuite Bathroom", "Waffle Breakfast Available"],
-        policies: ["Free cancellation up to 24h", "Luggage lockers included"],
-        hasElevator: true,
-        overallRating: 4.65,
-        reviewCount: 1600,
-        whyReasons: ["Located in a converted 19th-century courthouse directly on the Royal Mile", "Modern private ensuite studio with high-tech keyless entry", "Unbeatable value for prime central Edinburgh exploration"],
-      },
-      {
-        name: "Motel One Edinburgh-Princes",
-        location: "Princes Street, Edinburgh",
-        room: "Design Double Room with Castle View",
-        pricePerNight: 13500,
-        cleanliness: 9.4,
-        bathroomScore: 9.2,
-        amenities: ["Design Lounge & Gin Bar", "Rain Shower", "Organic Breakfast Buffet", "Castle View"],
-        policies: ["Free cancellation up to 48h", "24/7 reception"],
-        hasElevator: true,
-        overallRating: 4.7,
-        reviewCount: 2900,
-        whyReasons: ["Prime position on Princes Street facing Edinburgh Castle and Waverley Station", "Stylish boutique interiors and curated Scottish gin bar", "Exceptional cleanliness and sound insulation"],
-      },
-      {
-        name: "Apex City of Edinburgh Hotel",
-        location: "Grassmarket, Edinburgh",
-        room: "Executive King Room (Castle View)",
-        pricePerNight: 18500,
-        cleanliness: 9.5,
-        bathroomScore: 9.3,
-        amenities: ["Direct Edinburgh Castle Panorama", "Agua Restaurant & Bar", "Walk-in Shower & Tub", "Nespresso Machine"],
-        policies: ["Free cancellation up to 48h", "Scottish breakfast available"],
-        hasElevator: true,
-        overallRating: 4.78,
-        reviewCount: 2100,
-        whyReasons: ["Nestled in the historic Grassmarket directly below the Castle rock", "Unobstructed views of Edinburgh Castle illuminated at night", "Steps from traditional pubs, artisan shops, and the Royal Mile"],
-      },
-      {
-        name: "Kimpton Charlotte Square Edinburgh",
-        location: "New Town / Charlotte Square, Edinburgh",
-        room: "Premium Georgian King Room",
-        pricePerNight: 27000,
-        cleanliness: 9.7,
-        bathroomScore: 9.5,
-        amenities: ["Full-Service Spa & Thermal Suite", "The Garden Glasshouse Restaurant", "Tuck Box Treats", "Bespoke Pashley Bicycles"],
-        policies: ["Free cancellation up to 72h", "Breakfast included"],
-        hasElevator: true,
-        overallRating: 4.86,
-        reviewCount: 1750,
-        whyReasons: ["Set across seven interconnected Georgian townhouses in Edinburgh's UNESCO New Town", "Tranquil glass-roofed central courtyard garden dining", "Award-winning spa with indoor pool and thermal treatment rooms"],
-      },
-      {
         name: "The Balmoral Hotel",
         location: "1 Princes Street, Edinburgh",
         room: "Castle View Heritage Suite",
@@ -2026,69 +2251,301 @@ function getGuaranteedCuratedHotels(dest: string): ExtractedHotel[] {
     ];
   }
 
-  // Generic / global destination fallback (across all tiers with realistic international market pricing)
+  if (d.includes("agra") || d.includes("taj mahal") || (d.includes("uttar pradesh") && !d.includes("varanasi"))) {
+    return [
+      {
+        name: "Zostel Agra / Taj Ganj Boutique Homestay",
+        location: "Taj Ganj (500m to Taj Mahal East Gate), Agra",
+        room: "Private Ensuite Deluxe Double (Taj View Rooftop)",
+        pricePerNight: 950,
+        cleanliness: 9.3,
+        bathroomScore: 9.0,
+        amenities: ["Free High-Speed Wi-Fi", "Direct Rooftop Taj Mahal Panorama", "Air Conditioning", "Ensuite Modern Bathroom", "24/7 Hot Water", "Cafe & Travel Desk"],
+        policies: ["Free cancellation up to 24h", "24/7 Front Desk"],
+        hasElevator: false,
+        overallRating: 4.8,
+        reviewCount: 1850,
+        whyReasons: ["Exceptional budget value under ₹1,000/night", "Walk to Taj Mahal East Gate in under 8 minutes for sunrise tickets", "Spectacular rooftop cafe view of the Taj dome"],
+      },
+      {
+        name: "The Coral Tree Homestay Agra",
+        location: "VIP Road, Fatehabad Road, Agra",
+        room: "Eco Garden King Room with Balcony",
+        pricePerNight: 1650,
+        cleanliness: 9.6,
+        bathroomScore: 9.4,
+        amenities: ["Lush Organic Garden", "Homecooked Farm-to-Table Breakfast", "Free High-Speed Wi-Fi", "Quiet Enclave", "Air Conditioning"],
+        policies: ["Free cancellation up to 48h", "Homemade organic breakfast included"],
+        hasElevator: false,
+        overallRating: 4.92,
+        reviewCount: 740,
+        whyReasons: ["Award-winning peaceful garden homestay run by passionate local naturalists", "Outstanding cleanliness and homemade Mughlai & regional vegetarian breakfasts", "Only 10 minutes from the monument"],
+      },
+      {
+        name: "Tajview - IHCL SeleQtions Agra",
+        location: "Fatehabad Road, Tajganj, Agra",
+        room: "Superior Room with Taj Mahal View",
+        pricePerNight: 5500,
+        cleanliness: 9.6,
+        bathroomScore: 9.5,
+        amenities: ["Taj Mahal View Terrace", "Outdoor Swimming Pool & Spa", "Jhankar Classical Music Dining", "24/7 Concierge"],
+        policies: ["Free cancellation up to 48h", "Buffet breakfast included"],
+        hasElevator: true,
+        overallRating: 4.82,
+        reviewCount: 2900,
+        whyReasons: ["Prestigious Taj Group 4-star comfort with direct views of the Taj Mahal", "Heated outdoor pool, landscaped lawns, and live evening Sitar recitals", "Central Fatehabad Road location"],
+      },
+      {
+        name: "The Oberoi Amarvilas Agra",
+        location: "Taj East Gate Road, Agra",
+        room: "Premier Room with Unobstructed Taj Mahal View",
+        pricePerNight: 38000,
+        cleanliness: 9.9,
+        bathroomScore: 9.9,
+        amenities: ["Unobstructed Private Taj Mahal Balcony View", "Private Golf Buggy to Monument", "Mughal Terraced Pool & Fountains", "Oberoi Spa", "Fine Dining Esphahan"],
+        policies: ["Free cancellation up to 7 days", "Artisan breakfast & private buggy transfers included"],
+        hasElevator: true,
+        overallRating: 4.98,
+        reviewCount: 3400,
+        whyReasons: ["Located just 600 meters from the Taj Mahal with breathtaking unobstructed views from every single room", "Private golf carts take you directly to the VIP monument gate", "One of the world's most iconic luxury resort experiences"],
+      },
+    ];
+  }
+
+  // Generic destination fallback calibrated by regional spending profile
+  const profile = getRegionalSpendingProfile(cleanDest);
+  const isDomestic = profile.regionKey === "india_south_asia" || profile.regionKey === "southeast_asia";
+
+  if (isDomestic) {
+    return [
+      {
+        name: cleanDest ? `${cleanDest} Heritage Guesthouse & Homestay` : "Heritage Guesthouse & Homestay",
+        location: cleanDest ? `Old City / Central ${cleanDest}` : "City Center",
+        room: "Standard Air-Conditioned Deluxe Double",
+        pricePerNight: 1250,
+        cleanliness: 9.3,
+        bathroomScore: 9.0,
+        amenities: ["Free High-Speed Wi-Fi", "24h Hot Water", "Homecooked Breakfast Available", "Air Conditioning", "Rooftop Terrace"],
+        policies: ["Free cancellation up to 24h", "Flexible check-in"],
+        hasElevator: false,
+        overallRating: 4.75,
+        reviewCount: 420,
+        whyReasons: ["Superb budget value under ₹1,500/night with attentive host hospitality", "Spotless ensuite room with fast Wi-Fi and 24h hot water", "Central location walkable to local markets and dining"],
+      },
+      {
+        name: cleanDest ? `${cleanDest} Old Town Boutique Inn` : "Old Town Boutique Inn",
+        location: cleanDest ? `Historic Quarter, ${cleanDest}` : "Historic Quarter",
+        room: "Deluxe Heritage King Room",
+        pricePerNight: 2400,
+        cleanliness: 9.4,
+        bathroomScore: 9.2,
+        amenities: ["Free High-Speed WiFi", "Courtyard Garden", "Artisan Breakfast Included", "Air Conditioning"],
+        policies: ["Free cancellation up to 48h", "Breakfast included"],
+        hasElevator: true,
+        overallRating: 4.8,
+        reviewCount: 680,
+        whyReasons: ["Charming regional architecture with modern ensuite comforts", "Quiet pedestrian setting close to landmark attractions", "Warm personalized service and local recommendations"],
+      },
+      {
+        name: cleanDest ? `${cleanDest} Premier Grand Hotel & Suites` : "Premier Grand Hotel & Suites",
+        location: cleanDest ? `Prime Central Enclave, ${cleanDest}` : "Prime Central Enclave",
+        room: "Executive Panorama Suite",
+        pricePerNight: 6500,
+        cleanliness: 9.6,
+        bathroomScore: 9.4,
+        amenities: ["Panoramic Views", "Multi-Cuisine Restaurant & Bar", "Fitness Center & Pool", "24/7 Room Service"],
+        policies: ["Free cancellation up to 48h", "Buffet breakfast included"],
+        hasElevator: true,
+        overallRating: 4.85,
+        reviewCount: 940,
+        whyReasons: ["Prime central location close to key landmarks and dining", "Spacious executive suites with sweeping city views", "Full-service 4-star amenities and attentive concierge"],
+      },
+      {
+        name: cleanDest ? `${cleanDest} Royal Palace & Luxury Spa Resort` : "The Royal Palace & Luxury Spa Resort",
+        location: cleanDest ? `Prestige Quarter, ${cleanDest}` : "Prestige Quarter",
+        room: "Presidential Royal Suite",
+        pricePerNight: 18500,
+        cleanliness: 9.8,
+        bathroomScore: 9.7,
+        amenities: ["Full-Service Luxury Spa", "Gourmet Dining", "Bespoke Concierge", "Infinity Pool"],
+        policies: ["Free cancellation up to 7 days", "Artisan breakfast & concierge luggage assistance included"],
+        hasElevator: true,
+        overallRating: 4.95,
+        reviewCount: 650,
+        whyReasons: ["The premier 5-star luxury address with world-class hospitality", "Unmatched comfort, serene ambiance, and dedicated service", "Michelin-caliber private dining and holistic wellness spa"],
+      },
+    ];
+  }
+
+  // Western Europe / US / Nordic / International fallback
   return [
     {
-      name: `${dest} City Center Boutique Stay`,
-      location: `City Center, ${dest}`,
-      room: "Modern King Room with Ensuite Bath",
-      pricePerNight: 9500,
+      name: cleanDest ? `${cleanDest} Central Design Pods & Ensuite Rooms` : "Central Design Pods & Ensuite Rooms",
+      location: cleanDest ? `City Center, ${cleanDest}` : "City Center",
+      room: "Compact King Room with Private Ensuite Bath",
+      pricePerNight: 3400,
       cleanliness: 9.2,
       bathroomScore: 9.0,
-      amenities: ["Free High-Speed WiFi", "Rainfall Shower", "Coffee & Tea Bar", "24/7 Reception"],
-      policies: ["Free cancellation up to 24h", "Luggage storage included"],
+      amenities: ["Free High-Speed WiFi", "Rainfall Power Shower", "Coffee & Tea Bar", "24/7 Digital Check-in", "Luggage Storage"],
+      policies: ["Free cancellation up to 24h", "24/7 keycard access"],
       hasElevator: true,
       overallRating: 4.65,
-      reviewCount: 580,
-      whyReasons: ["High-value stay right in the vibrant city center", "Modern clean private room with fast Wi-Fi and hot showers", "Walkable to top cultural sights and transit links"],
+      reviewCount: 820,
+      whyReasons: ["Smart budget design stay in the lively city center", "Private ensuite room with acoustic soundproofing and fast Wi-Fi", "Walkable to top transit links and sights"],
     },
     {
-      name: `${dest} Heritage & Historic Inn`,
-      location: `Historic Quarter, ${dest}`,
+      name: cleanDest ? `${cleanDest} Old Town Heritage Boutique Hotel` : "Old Town Heritage Boutique Hotel",
+      location: cleanDest ? `Historic Quarter, ${cleanDest}` : "Historic Quarter",
       room: "Deluxe Heritage King Room",
-      pricePerNight: 14500,
-      cleanliness: 9.4,
-      bathroomScore: 9.2,
-      amenities: ["Free High-Speed WiFi", "Courtyard Garden", "Artisan Breakfast Available", "Air Conditioning"],
+      pricePerNight: 7800,
+      cleanliness: 9.5,
+      bathroomScore: 9.3,
+      amenities: ["Free High-Speed WiFi", "Courtyard Garden Cafe", "Organic Breakfast", "Air Conditioning"],
       policies: ["Free cancellation up to 48h", "Breakfast available"],
       hasElevator: true,
-      overallRating: 4.75,
-      reviewCount: 720,
-      whyReasons: ["Charming regional architecture with modern ensuite comforts", "Quiet pedestrian setting close to landmark attractions", "Warm personalized service and local recommendations"],
+      overallRating: 4.78,
+      reviewCount: 1100,
+      whyReasons: ["Charming regional architecture with modern ensuite comforts", "Quiet pedestrian setting close to landmark attractions", "Warm personalized service and local breakfast"],
     },
     {
-      name: `${dest} Grand Hotel & Suites`,
-      location: `Prime Central Enclave, ${dest}`,
+      name: cleanDest ? `${cleanDest} Premier Grand Hotel & Suites` : "Premier Grand Hotel & Suites",
+      location: cleanDest ? `Prime Central Enclave, ${cleanDest}` : "Prime Central Enclave",
       room: "Executive Panorama Suite",
-      pricePerNight: 24000,
+      pricePerNight: 16500,
       cleanliness: 9.6,
-      bathroomScore: 9.4,
-      amenities: ["Panoramic Views", "Fine Dining Restaurant & Bar", "Fitness Center & Spa", "24/7 Room Service"],
+      bathroomScore: 9.5,
+      amenities: ["Panoramic Views", "Fine Dining Restaurant & Bar", "Fitness Center & Spa", "24/7 Concierge"],
       policies: ["Free cancellation up to 48h", "Breakfast included"],
       hasElevator: true,
-      overallRating: 4.82,
-      reviewCount: 940,
+      overallRating: 4.86,
+      reviewCount: 1450,
       whyReasons: ["Prime central location close to key landmarks and dining", "Spacious executive suites with sweeping city views", "Full-service 4-star amenities and attentive concierge"],
     },
     {
-      name: `${dest} Palace & Luxury Spa Resort`,
-      location: `Prestige Quarter, ${dest}`,
+      name: cleanDest ? `${cleanDest} Royal Palace & Luxury Spa Resort` : "The Royal Palace & Luxury Spa Resort",
+      location: cleanDest ? `Prestige Quarter, ${cleanDest}` : "Prestige Quarter",
       room: "Presidential Royal Suite",
-      pricePerNight: 48000,
-      cleanliness: 9.8,
-      bathroomScore: 9.7,
+      pricePerNight: 38000,
+      cleanliness: 9.9,
+      bathroomScore: 9.8,
       amenities: ["Full-Service Luxury Spa", "Gourmet Dining", "Bespoke Concierge & Chauffeur", "Panoramic Lounge"],
-      policies: ["Free cancellation up to 7 days", "Artisan breakfast & concierge luggage assistance included"],
+      policies: ["Free cancellation up to 7 days", "Artisan breakfast included"],
       hasElevator: true,
-      overallRating: 4.95,
-      reviewCount: 650,
+      overallRating: 4.96,
+      reviewCount: 750,
       whyReasons: ["The premier 5-star luxury address with world-class hospitality", "Unmatched comfort, serene ambiance, and dedicated service", "Michelin-caliber private dining and holistic wellness spa"],
     },
   ];
 }
 
 function getGuaranteedCuratedFood(dest: string): ExtractedFood[] {
-  const d = dest.toLowerCase();
+  const cleanDest = cleanDestinationName(dest);
+  const d = cleanDest.toLowerCase();
+
+  if (d.includes("copenhagen") || d.includes("denmark")) {
+    return [
+      {
+        name: "Torvehallerne Food Hall (Hallernes Smørrebrød)",
+        cuisine: "Traditional Danish Open-Faced Sandwiches & Pastries",
+        priceRange: "₹₹",
+        location: "Frederiksborggade, Copenhagen",
+        whyRecommended: "Copenhagen's glass-covered artisan food market famous for rye-bread smørrebrød topped with roast beef, pickled herring, and crispy remoulade.",
+      },
+      {
+        name: "Restaurant Schønnemann",
+        cuisine: "Historic Classic Danish Lunch & Aquavit",
+        priceRange: "₹₹₹",
+        location: "Hauser Plads, Copenhagen",
+        whyRecommended: "Established in 1877, one of Denmark's oldest and most prestigious traditional lunch institutions serving authentic heritage recipes.",
+      },
+      {
+        name: "Gasoline Grill",
+        cuisine: "Gourmet Danish Burgers",
+        priceRange: "₹₹",
+        location: "Landgreven (Original Gas Station), Copenhagen",
+        whyRecommended: "Ranked among Bloomberg's top burgers in the world, crafted from fresh organic Danish beef grilled daily in a retro filling station.",
+      },
+    ];
+  }
+
+  if (d.includes("oslo") || (d.includes("norway") && !d.includes("bergen"))) {
+    return [
+      {
+        name: "Mathallen Oslo (Smeltverket)",
+        cuisine: "Nordic Artisan Cheeses, Cured Meats & Street Food",
+        priceRange: "₹₹",
+        location: "Vulkan, Grünerløkka, Oslo",
+        whyRecommended: "Vibrant indoor culinary bazaar along the Akerselva river showcasing artisan Norwegian cheeses, reindeer sausages, and craft ciders.",
+      },
+      {
+        name: "Fiskeriet Youngstorget",
+        cuisine: "Fresh Norwegian Seafood & Fish Soup",
+        priceRange: "₹₹",
+        location: "Youngstorget, Oslo",
+        whyRecommended: "Historic fishmonger and bistro famous for steaming Norwegian creamy fish soup, fresh Arctic cod, and wild salmon.",
+      },
+      {
+        name: "Den Glade Gris",
+        cuisine: "Traditional Norwegian Slow-Roasted Pork & Local Ales",
+        priceRange: "₹₹",
+        location: "Kristian Augusts Gate, Oslo",
+        whyRecommended: "Celebrated for its 7-hour slow-roasted crispy pork knuckle served with traditional root mash and Norwegian microbrews.",
+      },
+    ];
+  }
+
+  if (d.includes("stockholm") || d.includes("sweden")) {
+    return [
+      {
+        name: "Östermalms Saluhall",
+        cuisine: "Swedish Delicacies, Meatballs & Toast Skagen",
+        priceRange: "₹₹₹",
+        location: "Östermalmstorg, Stockholm",
+        whyRecommended: "Magnificent 1888 red-brick market hall serving authentic Swedish meatballs with lingonberries, Toast Skagen, and fresh Baltic seafood.",
+      },
+      {
+        name: "Pelikan (Södermalm)",
+        cuisine: "Classic Swedish Husmanskost",
+        priceRange: "₹₹",
+        location: "Blekingegatan, Södermalm, Stockholm",
+        whyRecommended: "Century-old beer hall with soaring ceilings serving traditional Swedish comfort food like boiled knuckle of pork and mustard sauce.",
+      },
+      {
+        name: "Kafé Vete-Katten",
+        cuisine: "Traditional Swedish Fika, Cardamom Buns & Princess Cake",
+        priceRange: "₹₹",
+        location: "Kungsgatan, Stockholm",
+        whyRecommended: "Stockholm's most cherished 1928 patisserie offering the quintessential Swedish 'fika' experience with freshly baked cardamom buns.",
+      },
+    ];
+  }
+
+  if (d.includes("bergen")) {
+    return [
+      {
+        name: "Enhjørningen (The Unicorn)",
+        cuisine: "Historic Hanseatic Norwegian Seafood",
+        priceRange: "₹₹₹",
+        location: "Bryggen, Bergen",
+        whyRecommended: "Bergen's oldest fish restaurant situated in a leaning 18th-century Hanseatic timber building on Bryggen, renowned for fresh halibut and whale steak.",
+      },
+      {
+        name: "Pingvinen",
+        cuisine: "Traditional Norwegian Home-Cooking (Plukkfisk)",
+        priceRange: "₹₹",
+        location: "Vaskerelven, Bergen",
+        whyRecommended: "Cozy gastropub beloved by locals for classic Norwegian comfort dishes like Plukkfisk (flaked cod mash) and hearty meat stew.",
+      },
+      {
+        name: "Fisketorget Seafood Bar",
+        cuisine: "Fresh King Crab & Bergen Seafood Platter",
+        priceRange: "₹₹₹",
+        location: "Torget (Fish Market), Bergen",
+        whyRecommended: "Dine on fresh King Crab legs, Norwegian lobsters, and seafood platters right on the edge of the harbour basin.",
+      },
+    ];
+  }
+
   if (d.includes("ladakh") || d.includes("leh")) {
     return [
       {
@@ -2124,31 +2581,172 @@ function getGuaranteedCuratedFood(dest: string): ExtractedFood[] {
 
   return [
     {
-      name: `${dest} Heritage Dining Room`,
+      name: cleanDest ? `${cleanDest} Heritage Dining Room` : "Heritage Dining Room",
       cuisine: "Authentic Regional Cuisine",
       priceRange: "₹₹",
-      location: `Central ${dest}`,
-      whyRecommended: "Traditional recipes made with fresh local ingredients.",
+      location: cleanDest ? `Central ${cleanDest}` : "City Center",
+      whyRecommended: `Traditional recipes made with fresh local ingredients in ${cleanDest || "the region"}.`,
     },
     {
-      name: `${dest} Panorama Terrace Cafe`,
+      name: cleanDest ? `${cleanDest} Panorama Terrace Cafe` : "Panorama Terrace Cafe",
       cuisine: "Cafe & Light Bites",
       priceRange: "₹₹",
-      location: `Scenic Overlook, ${dest}`,
+      location: cleanDest ? `Scenic Overlook, ${cleanDest}` : "Scenic Overlook",
       whyRecommended: "Relaxing atmosphere with scenic views and artisan coffee.",
     },
     {
-      name: `${dest} Artisan Kitchen & Grill`,
+      name: cleanDest ? `${cleanDest} Artisan Kitchen & Grill` : "Artisan Kitchen & Grill",
       cuisine: "Fusion & Contemporary",
       priceRange: "₹₹₹",
-      location: `Downtown ${dest}`,
+      location: cleanDest ? `Downtown ${cleanDest}` : "Downtown",
       whyRecommended: "Highly rated contemporary dining with signature seasonal dishes.",
     },
   ];
 }
 
 function getGuaranteedCuratedExperiences(dest: string): ExtractedExperience[] {
-  const d = dest.toLowerCase();
+  const cleanDest = cleanDestinationName(dest);
+  const d = cleanDest.toLowerCase();
+
+  if (d.includes("copenhagen") || d.includes("denmark")) {
+    return [
+      {
+        name: "Nyhavn to Christianshavn Classic Canal Boat Cruise",
+        category: "tour",
+        blurb: "Glide through Copenhagen's historic canals, harbor baths, and past the Opera House and Little Mermaid.",
+        price: 1200,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 1.5,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "Nyhavn, Copenhagen",
+        whyRecommended: "The essential orientation tour of Copenhagen from the water with live multilingual commentary.",
+      },
+      {
+        name: "Tivoli Gardens Theme Park All-Inclusive Ride Pass",
+        category: "adventure",
+        blurb: "Full day access to vintage rollercoasters, fairy-tale rides, and evening illuminated light shows.",
+        price: 2600,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 4,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "Tivoli Gardens, Copenhagen",
+        whyRecommended: "World-class fun inside one of the planet's oldest and most enchanting amusement pleasure parks.",
+      },
+      {
+        name: "Copenhagen Highlights Guided E-Bike & Culinary Tour",
+        category: "tour",
+        blurb: "Pedal like a Dane across dedicated bike bridges, Nyhavn, Kastellet, and sample fresh organic pastries.",
+        price: 3400,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 3,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "Copenhagen Center",
+        whyRecommended: "Experience the world's cycling capital effortlessly on premium electric city bicycles.",
+      },
+    ];
+  }
+
+  if (d.includes("oslo") || (d.includes("norway") && !d.includes("bergen"))) {
+    return [
+      {
+        name: "Oslofjord Sightseeing Eco-Ferry Island Cruise",
+        category: "water",
+        blurb: "Sail past picturesque fjord islands, wooden summer cottages, and Dyna Lighthouse on an electric vessel.",
+        price: 2800,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 2,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "City Hall Pier 3, Oslo",
+        whyRecommended: "Silent electric cruising through the serene blue waterways and archipelago of the Oslofjord.",
+      },
+      {
+        name: "Floating Fjord Sauna & Cold Dip at KOK Oslo",
+        category: "water",
+        blurb: "Authentic Nordic wood-fired sauna floating on the fjord right next to the Opera House with cold plunge.",
+        price: 2200,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 2,
+        difficulty: "easy",
+        familyFriendly: false,
+        minAge: 12,
+        location: "Bjørvika / Opera House, Oslo",
+        whyRecommended: "The ultimate Scandinavian wellness ritual combining steaming hot wood saunas with an invigorating fjord dip.",
+      },
+    ];
+  }
+
+  if (d.includes("stockholm") || d.includes("sweden")) {
+    return [
+      {
+        name: "Stockholm Archipelago Cruise to Fjäderholmarna Islands",
+        category: "water",
+        blurb: "Scenic boat voyage navigating past Stockholm's waterfront islands to the gateway of the 30,000-island archipelago.",
+        price: 2400,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 3,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "Strömkajen, Stockholm",
+        whyRecommended: "Witness the breathtaking maritime landscape of Sweden's famous archipelago with artisan island craft shops.",
+      },
+      {
+        name: "Gamla Stan Medieval History & Ghost Walking Tour",
+        category: "cultural",
+        blurb: "Lantern-lit evening walking tour through narrow cobblestone alleys, forgotten courtyards, and royal legends.",
+        price: 1500,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 1.5,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "Stortorget, Gamla Stan, Stockholm",
+        whyRecommended: "Uncover dramatic tales of medieval kings, plagues, and Viking heritage in Stockholm's oldest quarter.",
+      },
+    ];
+  }
+
+  if (d.includes("bergen")) {
+    return [
+      {
+        name: "Norway in a Nutshell: Nærøyfjord Fjord Cruise & Flåm Railway",
+        category: "adventure",
+        blurb: "Legendary fjord expedition cruising the UNESCO Nærøyfjord and riding the steep Flåm mountain railway.",
+        price: 12500,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 8,
+        difficulty: "easy",
+        familyFriendly: true,
+        location: "Bergen Railway Station Departure",
+        whyRecommended: "One of the world's most spectacular scenic journeys through towering Norwegian waterfalls and sheer fjord cliffs.",
+      },
+      {
+        name: "Mount Fløyen to Mount Ulriken Vidden Mountain Ridge Trek",
+        category: "adventure",
+        blurb: "Guided alpine ridge hike across the plateau between Bergen's two most famous mountain summits.",
+        price: 2500,
+        priceNote: "per person",
+        perPerson: true,
+        durationHours: 5,
+        difficulty: "moderate",
+        familyFriendly: false,
+        minAge: 10,
+        location: "Mount Fløyen Summit",
+        whyRecommended: "The definitive Bergen outdoor trek offering 360-degree vistas of the North Sea and surrounding fjords.",
+      },
+    ];
+  }
+
   if (d.includes("ladakh") || d.includes("leh")) {
     return [
       {
@@ -2209,7 +2807,7 @@ function getGuaranteedCuratedExperiences(dest: string): ExtractedExperience[] {
 
   return [
     {
-      name: `Guided Historical & Cultural Walking Tour in ${dest}`,
+      name: cleanDest ? `Guided Historical & Cultural Walking Tour in ${cleanDest}` : "Guided Historical & Cultural Walking Tour",
       category: "cultural",
       blurb: `Explore hidden courtyards, historic monuments, and heritage architecture with a verified local historian.`,
       price: 1200,
@@ -2218,24 +2816,24 @@ function getGuaranteedCuratedExperiences(dest: string): ExtractedExperience[] {
       durationHours: 3,
       difficulty: "easy",
       familyFriendly: true,
-      location: dest,
-      whyRecommended: "An immersive deep dive into the local stories, history, and culture.",
+      location: cleanDest || "City Center",
+      whyRecommended: `An immersive deep dive into the local stories, history, and culture of ${cleanDest || "the city"}.`,
     },
     {
-      name: `Sunset Scenic Photography & Panorama Tour`,
+      name: cleanDest ? `Sunset Scenic Photography & Panorama Tour in ${cleanDest}` : "Sunset Scenic Photography & Panorama Tour",
       category: "tour",
-      blurb: `Catch the golden hour light from the highest scenic vantage points overlooking ${dest}.`,
+      blurb: `Catch the golden hour light from the highest scenic vantage points overlooking ${cleanDest || "the area"}.`,
       price: 1800,
       priceNote: "per person",
       perPerson: true,
       durationHours: 2.5,
       difficulty: "easy",
       familyFriendly: true,
-      location: dest,
+      location: cleanDest || "Scenic Overlook",
       whyRecommended: "Ideal for photographers and couples seeking unforgettable sunset vistas.",
     },
     {
-      name: `Local Culinary & Market Tasting Walk`,
+      name: cleanDest ? `Local Culinary & Market Tasting Walk in ${cleanDest}` : "Local Culinary & Market Tasting Walk",
       category: "food_exp",
       blurb: `Taste authentic regional specialties, street bites, and artisan drinks across 5 curated stops.`,
       price: 1500,
@@ -2244,7 +2842,7 @@ function getGuaranteedCuratedExperiences(dest: string): ExtractedExperience[] {
       durationHours: 2.5,
       difficulty: "easy",
       familyFriendly: true,
-      location: dest,
+      location: cleanDest || "Downtown",
       whyRecommended: "Sample the most iconic flavors and dishes loved by local residents.",
     },
   ];
@@ -2259,4 +2857,3 @@ function hash(s: string): string {
 }
 
 export { classifySource };
-

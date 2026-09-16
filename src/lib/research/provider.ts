@@ -37,6 +37,12 @@ export interface DestinationMeta {
   bestSeason: string;
   facts: string[];
   destinations?: string[];
+  /** Middleman: canonical entity the raw request resolved to (e.g. "Taj Mahal") */
+  canonicalOf?: string;
+  /** Middleman: known closures/temporal rules (e.g. "Taj Mahal closed Fridays") */
+  knownClosures?: string[];
+  /** Middleman: geofence anchor + radius used to reject cross-city contamination */
+  geofence?: { hub: string; radiusKm: number; region: string };
 }
 
 export interface DestinationDataset {

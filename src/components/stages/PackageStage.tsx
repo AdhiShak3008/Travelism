@@ -76,8 +76,19 @@ export function PackageStage() {
   const primaryHotel = blob.hotels[0] || (isNoHotel ? null : dataset.hotels[0]);
   const alternativeHotels = dataset.hotels.filter((h) => h.id !== primaryHotel?.id);
 
+  const [selectedHubFilter, setSelectedHubFilter] = useState<string>("all");
+  const destinationHubs = dataset.meta.destinations && dataset.meta.destinations.length >= 2
+    ? dataset.meta.destinations
+    : Array.from(new Set(dataset.hotels.map((h) => h.location).filter(Boolean)));
+
   // Filtered hotels for stays tab
   const filteredHotels = dataset.hotels.filter((h) => {
+    if (selectedHubFilter !== "all") {
+      const hLoc = (h.location || "").toLowerCase();
+      const qHub = selectedHubFilter.toLowerCase();
+      const matchHub = hLoc.includes(qHub) || qHub.includes(hLoc) || h.name.toLowerCase().includes(qHub);
+      if (!matchHub) return false;
+    }
     if (hotelSearch.trim()) {
       const q = hotelSearch.toLowerCase().trim();
       const matchName = h.name.toLowerCase().includes(q);
@@ -108,6 +119,15 @@ Generated with Travelism 2.0`;
       setTimeout(() => setCopied(false), 2500);
     });
   };
+
+  const toggleLock = useTrip((s) => s.toggleLock);
+  const activeHubForDisplay = selectedHubFilter !== "all" ? selectedHubFilter : destinationHubs[0];
+  const currentActiveStayForHub = blob.hotels.find(
+    (h) => (h.location && h.location.toLowerCase().includes((activeHubForDisplay || "").toLowerCase())) ||
+           (activeHubForDisplay || "").toLowerCase().includes((h.location || "").toLowerCase()) ||
+           h.name.toLowerCase().includes((activeHubForDisplay || "").toLowerCase())
+  ) || blob.hotels[0];
+  const isCurrentHubLocked = currentActiveStayForHub ? blob.lockedComponentIds.includes(currentActiveStayForHub.id) : false;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 w-full min-w-0 overflow-x-hidden">
@@ -459,6 +479,134 @@ Generated with Travelism 2.0`;
                 />
               </div>
 
+              {/* Multi-Destination Hub Selector Dropdown & Tabs */}
+              {destinationHubs.length >= 2 && (
+                <div className="rounded-2xl border border-brand/30 bg-brand/[0.03] p-4 sm:p-5 shadow-sm space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-brand">
+                        Multi-Destination Accommodation Hubs
+                      </div>
+                      <div className="text-sm sm:text-base font-bold text-ink">
+                        Filter Stays by Destination Leg & Lock Choices
+                      </div>
+                    </div>
+
+                    {/* Dropdown for location selection */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-ink-soft">Jump to Location:</span>
+                      <select
+                        value={selectedHubFilter}
+                        onChange={(e) => setSelectedHubFilter(e.target.value)}
+                        className="rounded-xl border border-line bg-card px-3 py-1.5 text-xs font-bold text-ink outline-none focus:border-brand shadow-xs"
+                      >
+                        <option value="all">📍 All Locations ({dataset.hotels.length} Stays)</option>
+                        {destinationHubs.map((hub, hIdx) => {
+                          const count = dataset.hotels.filter(
+                            (h) =>
+                              (h.location && h.location.toLowerCase().includes(hub.toLowerCase())) ||
+                              h.name.toLowerCase().includes(hub.toLowerCase())
+                          ).length;
+                          return (
+                            <option key={hub} value={hub}>
+                              📍 Leg {hIdx + 1}: {hub} ({count} stays)
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Hub Filter Pills */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line/60">
+                    <button
+                      onClick={() => setSelectedHubFilter("all")}
+                      className={cx(
+                        "rounded-full px-3.5 py-1 text-xs font-bold transition shadow-xs",
+                        selectedHubFilter === "all"
+                          ? "bg-brand text-paper shadow-sm"
+                          : "border border-line bg-card text-ink-soft hover:text-ink hover:bg-paper-2"
+                      )}
+                    >
+                      All Locations ({dataset.hotels.length})
+                    </button>
+                    {destinationHubs.map((hub, hIdx) => {
+                      const isSelected = selectedHubFilter.toLowerCase() === hub.toLowerCase();
+                      const activeHotelForHub = blob.hotels.find(
+                        (h) =>
+                          (h.location && h.location.toLowerCase().includes(hub.toLowerCase())) ||
+                          hub.toLowerCase().includes((h.location || "").toLowerCase()) ||
+                          h.name.toLowerCase().includes(hub.toLowerCase())
+                      );
+                      const isLocked = activeHotelForHub
+                        ? blob.lockedComponentIds.includes(activeHotelForHub.id)
+                        : false;
+
+                      return (
+                        <button
+                          key={hub}
+                          onClick={() => setSelectedHubFilter(hub)}
+                          className={cx(
+                            "rounded-full px-3.5 py-1 text-xs font-bold transition flex items-center gap-1.5 shadow-xs",
+                            isSelected
+                              ? "bg-brand text-paper shadow-sm"
+                              : "border border-line bg-card text-ink-soft hover:text-ink hover:bg-paper-2"
+                          )}
+                        >
+                          <span>📍 Leg {hIdx + 1}: {hub}</span>
+                          {isLocked && <span className="text-amber-300 text-[10px]">🔒</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Active Hub Stay Banner with Lock Control */}
+              {activeHubForDisplay && (
+                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.04] p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-500/10 text-2xl border border-emerald-500/30">
+                      🏨
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                          {selectedHubFilter !== "all" ? `Active Stay for ${selectedHubFilter}` : "Primary Trip Stay"}
+                        </span>
+                        {isCurrentHubLocked && (
+                          <span className="rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.2 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                            🔒 Locked
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-base font-bold text-ink">
+                        {currentActiveStayForHub?.name || "Selected Accommodation"}
+                      </h4>
+                      <p className="text-xs text-ink-soft mt-0.5">
+                        📍 {currentActiveStayForHub?.location || activeHubForDisplay} · {inr(currentActiveStayForHub?.pricePerNight || 0)}/night · {currentActiveStayForHub?.room || "Deluxe Room"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {currentActiveStayForHub && (
+                      <button
+                        onClick={() => toggleLock(currentActiveStayForHub.id)}
+                        className={cx(
+                          "rounded-xl border px-3.5 py-1.5 text-xs font-bold transition shadow-xs",
+                          isCurrentHubLocked
+                            ? "border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                            : "border-line bg-card text-ink-soft hover:text-ink hover:border-brand"
+                        )}
+                      >
+                        {isCurrentHubLocked ? "🔒 Locked to Leg" : "🔓 Lock This Stay"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Search and Tier Filters */}
               <div className="space-y-3 border-b border-line pb-4">
                 <div className="relative max-w-md">
@@ -536,6 +684,7 @@ Generated with Travelism 2.0`;
                     <p className="text-sm font-medium">No stays match your current filter.</p>
                     <button
                       onClick={() => {
+                        setSelectedHubFilter("all");
                         setHotelTierFilter("all");
                         setHotelSearch("");
                       }}

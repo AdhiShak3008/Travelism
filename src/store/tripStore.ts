@@ -17,6 +17,8 @@ import type {
   Preferences,
   ItineraryStop,
   StayMode,
+  TravelerMemory,
+  ChatMessage,
 } from "@/lib/types";
 import { research, type DestinationDataset } from "@/lib/research/provider";
 import {
@@ -38,6 +40,7 @@ import { AGENT_ORDER, makeIdleActivity, AGENTS } from "@/lib/agents";
 import { runLiveInvestigation, runRefine, runRefineHotels, fetchCapabilities, fetchRouteFlights, type LiveProgress } from "@/lib/liveClient";
 import { registerSources } from "@/lib/research/sourceRegistry";
 import { routeInstruction } from "@/lib/concierge";
+import { createDefaultTravelerMemory, mergeTravelerMemory } from "@/lib/memory";
 
 const now = () => new Date().toISOString();
 
@@ -141,7 +144,22 @@ interface TripStore {
   chooseFlight: (flight: FlightOption, kind: "out" | "return") => void;
   toggleLock: (componentId: string) => void;
 
-  // conversational modification
+  // conversational modification & memory
+  chatLog: ChatMessage[];
+  travelerMemory: TravelerMemory;
+  addChatMessage: (msg: ChatMessage) => void;
+  updateTravelerMemory: (delta: {
+    dietary?: string[];
+    vibes?: string[];
+    style?: string[];
+    pacing?: string[];
+    budget?: string[];
+    companionship?: string[];
+    pastDecisions?: string[];
+    keyNotes?: string[];
+    learnedFacts?: string[];
+  }) => void;
+  clearChatMemory: () => void;
   applyInstruction: (text: string) => void;
 
   // itinerary day customization
@@ -171,6 +189,45 @@ export const useTrip = create<TripStore>((set, get) => ({
   lastMessage: null,
   liveMode: null,
   maxStageReached: "dream",
+  chatLog: [
+    {
+      id: "init_1",
+      role: "concierge",
+      text: "Hello! I am your AI Travel Concierge. Ask me anything about weather, culture, packing essentials, or ask me to adjust your duration, flights, hotel tiers, activities, or daily schedule in real time!",
+      timestamp: "Just now",
+    },
+  ],
+  travelerMemory: createDefaultTravelerMemory(),
+
+  addChatMessage: (msg) => {
+    set((st) => ({
+      chatLog: [...st.chatLog, msg],
+    }));
+  },
+
+  updateTravelerMemory: (delta) => {
+    const next = mergeTravelerMemory(get().travelerMemory, delta);
+    set((st) => ({
+      travelerMemory: next,
+      blob: { ...st.blob, travelerMemory: next, updatedAt: now() },
+    }));
+  },
+
+  clearChatMemory: () => {
+    const resetMem = createDefaultTravelerMemory();
+    set((st) => ({
+      travelerMemory: resetMem,
+      blob: { ...st.blob, travelerMemory: resetMem, updatedAt: now() },
+      chatLog: [
+        {
+          id: `init_${Date.now()}`,
+          role: "concierge",
+          text: "Memory refreshed! What else would you like to explore or customize for your journey?",
+          timestamp: "Just now",
+        },
+      ],
+    }));
+  },
 
   setStage: (s) => {
     const { maxStageReached } = get();
@@ -211,6 +268,13 @@ export const useTrip = create<TripStore>((set, get) => ({
       ? "homestays"
       : "hotels";
 
+    const initialMemory = mergeTravelerMemory(createDefaultTravelerMemory(), {
+      learnedFacts: [dream],
+      keyNotes: [`Dream: "${dream}"`],
+      companionship: extractedTrav > 1 ? [`Party of ${extractedTrav} travelers`] : ["Solo traveler"],
+      style: isOutdoor ? ["Self-supported / Outdoor camping"] : undefined,
+    });
+
     const baseBlob: TripBlob = {
       ...emptyBlob(),
       dream,
@@ -224,9 +288,23 @@ export const useTrip = create<TripStore>((set, get) => ({
         stayMode: initialStayMode,
         isSelfSupported: isOutdoor,
       },
+      travelerMemory: initialMemory,
       signals,
     };
-    set({ blob: baseBlob, stage: "investigate", investigating: true });
+    set({
+      blob: baseBlob,
+      travelerMemory: initialMemory,
+      chatLog: [
+        {
+          id: `init_${Date.now()}`,
+          role: "concierge",
+          text: `Hello! I am your AI Travel Concierge for **${dream}**.\n\nAsk me anything about visas, packing, hidden local spots, or ask me to customize your hotel, dates, duration, pace, or daily schedule in real time!`,
+          timestamp: "Just now",
+        },
+      ],
+      stage: "investigate",
+      investigating: true,
+    });
 
     const caps = await fetchCapabilities();
     set({ liveMode: caps.live });
@@ -455,14 +533,18 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   addComment: (text, scope, entityId) => {
-    const { blob } = get();
+    const { blob, travelerMemory } = get();
     const signals = parseComment(text, scope, entityId);
     const md = moodDeltaFromComment(text);
     const mood = applyMoodDelta(blob.mood, md);
     const allSignals = [...blob.signals, ...signals];
     const prefs = derivePreferences(allSignals, blob.preferences);
+    const nextMem = mergeTravelerMemory(travelerMemory, {
+      learnedFacts: [text],
+    });
     set({
-      blob: { ...blob, signals: allSignals, mood, preferences: prefs, updatedAt: now() },
+      blob: { ...blob, signals: allSignals, mood, preferences: prefs, travelerMemory: nextMem, updatedAt: now() },
+      travelerMemory: nextMem,
       lastMessage: signals[0]?.interpretation ?? null,
     });
     return signals;
@@ -745,10 +827,31 @@ export const useTrip = create<TripStore>((set, get) => ({
       };
       hotels = [wildStay];
     } else if (dataset?.hotels.length) {
-      const candidate = mode === "homestays"
-        ? dataset.hotels.find((h) => h.category === "homestay" || /homestay/i.test(h.name)) || dataset.hotels[0]
-        : dataset.hotels.find((h) => h.category !== "wild_camping") || dataset.hotels[0];
-      hotels = candidate ? [candidate] : [];
+      const destinations = dataset.meta.destinations || [];
+      if (destinations.length >= 2) {
+        const multiStays: HotelOption[] = [];
+        for (const d of destinations) {
+          const dLower = d.toLowerCase();
+          const dHotels = dataset.hotels.filter(
+            (h) => (h.location && h.location.toLowerCase().includes(dLower)) || h.name.toLowerCase().includes(dLower)
+          );
+          const pool = dHotels.length > 0 ? dHotels : dataset.hotels;
+          const candidate =
+            mode === "homestays"
+              ? pool.find((h) => h.category === "homestay" || /homestay/i.test(h.name)) || pool[0]
+              : pool.find((h) => h.category !== "wild_camping") || pool[0];
+          if (candidate && !multiStays.some((s) => s.id === candidate.id)) {
+            multiStays.push(candidate);
+          }
+        }
+        hotels = multiStays.length > 0 ? multiStays : [dataset.hotels[0]];
+      } else {
+        const candidate =
+          mode === "homestays"
+            ? dataset.hotels.find((h) => h.category === "homestay" || /homestay/i.test(h.name)) || dataset.hotels[0]
+            : dataset.hotels.find((h) => h.category !== "wild_camping") || dataset.hotels[0];
+        hotels = candidate ? [candidate] : [];
+      }
     }
 
     const nextPrefs: Preferences = {
@@ -758,6 +861,9 @@ export const useTrip = create<TripStore>((set, get) => ({
     };
 
     let next = { ...blob, hotels, preferences: nextPrefs, updatedAt: now() };
+    if (dataset) {
+      next.itinerary = buildItinerary(next, dataset);
+    }
     next.costs = computeCosts(next);
     set({ blob: next });
     get().pushMutation({
@@ -775,13 +881,26 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   chooseHotel: (hotel, replaceId) => {
-    const { blob } = get();
+    const { blob, dataset } = get();
     const before = costTotals(blob.costs).total;
     let hotels = [...blob.hotels];
     if (replaceId) {
       hotels = hotels.map((h) => (h.id === replaceId ? hotel : h));
-    } else if (hotels.length) {
-      hotels[0] = hotel;
+    } else if (hotels.length > 0) {
+      // Hub-aware matching: find existing stay in blob.hotels that matches this hotel's location
+      const hotelLoc = (hotel.location || "").toLowerCase();
+      const matchIdx = hotels.findIndex((h) => {
+        const hLoc = (h.location || "").toLowerCase();
+        return (
+          (hLoc && hotelLoc && (hLoc.includes(hotelLoc) || hotelLoc.includes(hLoc))) ||
+          h.id === hotel.id
+        );
+      });
+      if (matchIdx >= 0) {
+        hotels[matchIdx] = hotel;
+      } else {
+        hotels[0] = hotel;
+      }
     } else {
       hotels = [hotel];
     }
@@ -792,13 +911,16 @@ export const useTrip = create<TripStore>((set, get) => ({
       isSelfSupported: stayMode === "wild_camping",
     };
     let next: TripBlob = { ...blob, hotels, preferences: nextPrefs, updatedAt: now() };
+    if (dataset) {
+      next.itinerary = buildItinerary(next, dataset);
+    }
     next.costs = computeCosts(next);
     const after = costTotals(next.costs).total;
     set({ blob: next });
     get().pushMutation({
       id: `mut_${Date.now()}`,
       at: now(),
-      summary: `Hotel switched to ${hotel.name}`,
+      summary: `Hotel switched to ${hotel.name} (${hotel.location})`,
       deltas: [
         `Bathroom ${hotel.bathroomScore}/10`,
         `Cleanliness ${hotel.cleanliness}/10`,
@@ -1144,6 +1266,7 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   reset: () => {
+    const resetMem = createDefaultTravelerMemory();
     set({
       blob: emptyBlob(),
       dataset: null,
@@ -1153,6 +1276,15 @@ export const useTrip = create<TripStore>((set, get) => ({
       investigating: false,
       refining: false,
       lastMessage: null,
+      travelerMemory: resetMem,
+      chatLog: [
+        {
+          id: "init_1",
+          role: "concierge",
+          text: "Hello! I am your AI Travel Concierge. Ask me anything about your destination or trip customization!",
+          timestamp: "Just now",
+        },
+      ],
     });
   },
 
@@ -1280,18 +1412,23 @@ function rankHotels(blob: TripBlob, dataset: DestinationDataset, customHotels?: 
       }
     } else if (wantCheap) {
       // Heavily favor affordable stays and strongly penalize expensive 5-star / luxury stays (> 12k/night)
-      if (price > 18000) s -= 45;
-      else if (price > 12000) s -= 25;
-      else if (price <= 3500) s += 45; // boost clean budget stays
-      else if (price <= 8000) s += 30; // boost clean boutique stays
-      else s += 10;
+      if (price > 18000) s -= 50;
+      else if (price > 8000) s -= 30;
+      else if (price <= 2000) s += 50; // massive boost for sweet-spot budget stays
+      else if (price <= 3500) s += 35;
+      else if (price <= 6000) s += 15;
     } else if (wantPremium) {
-      if (price > 20000) s += 25;
-      else if (price < 8000) s -= 15;
+      if (price > 20000) s += 30;
+      else if (price > 12000) s += 15;
+      else if (price < 5000) s -= 20;
     } else {
-      // Moderate tier (default): prefer balanced good-value options (3,000 - 10,000) over ultra-luxury (25,000+)
-      if (price > 22000) s -= 15;
-      else if (price >= 3000 && price <= 10000) s += 10;
+      // Standard / Balanced tier (default):
+      // Strongly prefer high-value, clean, accessible stays under ₹2,500 in domestic/budget markets,
+      // and under ₹5,500 in high-cost international markets.
+      if (price > 22000) s -= 30;
+      else if (price > 12000) s -= 18;
+      else if (price >= 750 && price <= 2200) s += 25; // boost sweet-spot affordable clean rooms
+      else if (price >= 2200 && price <= 5500) s += 15; // good boutique value
     }
 
     return s;

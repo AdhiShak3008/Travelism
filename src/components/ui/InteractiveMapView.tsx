@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import type { Place, HotelOption, ItineraryStop } from "@/lib/types";
@@ -16,33 +16,53 @@ interface MapPinItem {
   duration?: string;
 }
 
+function cleanStopQuery(label: string, destination: string): string {
+  const stripped = label
+    .replace(/^(visit|explore|tour|dinner at|lunch at|breakfast at|drive to|check-in at|check out from|checkout from|sunset at|stroll at|orientation:)\s+/i, "")
+    .replace(/·.*$/, "")
+    .trim();
+  return stripped ? `${stripped}, ${destination}` : destination;
+}
+
 export function InteractiveMapView({
   destinationName,
   places = [],
   hotels = [],
   dayStops = [],
   activeDayNum,
+  selectedPinId: externalSelectedPinId,
+  onPinSelect,
 }: {
   destinationName: string;
   places?: Place[];
   hotels?: HotelOption[];
   dayStops?: ItineraryStop[];
   activeDayNum?: number;
+  selectedPinId?: string | null;
+  onPinSelect?: (id: string) => void;
 }) {
-  const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const [internalPinId, setInternalPinId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"all" | "places" | "hotels" | "stops">("all");
+
+  const selectedPinId = externalSelectedPinId !== undefined ? externalSelectedPinId : internalPinId;
 
   // Build unified pin items
   const pins: MapPinItem[] = [];
 
   if (dayStops.length > 0) {
     dayStops.forEach((s, idx) => {
+      const matchingPlace = s.placeId ? places.find((p) => p.id === s.placeId) : null;
+      const cleanLoc = matchingPlace
+        ? `${matchingPlace.canonicalName}, ${matchingPlace.location || destinationName}`
+        : cleanStopQuery(s.label, destinationName);
+
       pins.push({
         id: `stop_${idx}`,
         name: `${idx + 1}. ${s.label}`,
-        category: "stop",
-        location: destinationName,
-        blurb: s.note || `${s.start} - ${s.end}`,
+        category: s.kind === "hotel" ? "hotel" : s.kind === "meal" ? "food" : "stop",
+        location: cleanLoc,
+        blurb: matchingPlace?.blurb || s.note || `${s.start} - ${s.end}`,
+        imageUrl: matchingPlace?.images[0]?.url,
         duration: `${s.start} - ${s.end}`,
       });
     });
@@ -52,7 +72,7 @@ export function InteractiveMapView({
         id: p.id,
         name: p.canonicalName,
         category: "attraction",
-        location: `${p.canonicalName}, ${destinationName}`,
+        location: `${p.canonicalName}, ${p.location || destinationName}`,
         blurb: p.blurb,
         imageUrl: p.images[0]?.url,
         duration: `${p.durationHours}h visit`,
@@ -64,7 +84,7 @@ export function InteractiveMapView({
         id: h.id,
         name: h.name,
         category: "hotel",
-        location: `${h.name}, ${h.location}`,
+        location: `${h.name}, ${h.location || destinationName}`,
         blurb: h.room,
         imageUrl: h.images[0]?.url,
         duration: "Hotel / Stay",
@@ -73,9 +93,14 @@ export function InteractiveMapView({
   }
 
   const activePin = pins.find((p) => p.id === selectedPinId) || pins[0];
-  const querySubject = activePin ? activePin.location : `${destinationName} top attractions and hotels`;
+  const querySubject = activePin ? activePin.location : `${destinationName} attractions and hotels`;
   const googleMapsEmbedUrl = `https://www.google.com/maps?q=${encodeURIComponent(querySubject)}&output=embed`;
   const googleMapsDirectUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(querySubject)}`;
+
+  const handleSelectPin = (id: string) => {
+    setInternalPinId(id);
+    onPinSelect?.(id);
+  };
 
   const filteredPins = pins.filter((p) => {
     if (activeTab === "places") return p.category === "attraction";
@@ -123,9 +148,10 @@ export function InteractiveMapView({
         {/* Map Frame Container */}
         <div className="relative h-[320px] sm:h-[400px] lg:h-[480px] w-full min-w-0 bg-paper-3 overflow-hidden">
           <iframe
-            title={`Interactive Map of ${destinationName}`}
+            key={querySubject}
+            title={`Interactive Map of ${activePin?.name || destinationName}`}
             src={googleMapsEmbedUrl}
-            className="h-full w-full border-0 grayscale-[0.15] contrast-[1.05]"
+            className="h-full w-full border-0 grayscale-[0.15] contrast-[1.05] transition-opacity duration-300"
             loading="lazy"
             allowFullScreen
           />
@@ -206,7 +232,7 @@ export function InteractiveMapView({
               return (
                 <div
                   key={pin.id}
-                  onClick={() => setSelectedPinId(pin.id)}
+                  onClick={() => handleSelectPin(pin.id)}
                   className={cx(
                     "cursor-pointer rounded-2xl border p-2.5 sm:p-3 transition-all flex items-center justify-between gap-2.5",
                     isSelected
@@ -242,3 +268,4 @@ export function InteractiveMapView({
     </div>
   );
 }
+

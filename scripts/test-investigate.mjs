@@ -34,6 +34,9 @@ if (err) { console.log("ERROR:", err); process.exit(1); }
 if (!dataset) { console.log("no dataset"); process.exit(1); }
 
 console.log("\n===== RESULT =====");
+console.log("MIDDLEMAN canonicalOf:", dataset.meta.canonicalOf ?? "(none)");
+console.log("MIDDLEMAN geofence:", JSON.stringify(dataset.meta.geofence));
+console.log("MIDDLEMAN closures:", (dataset.meta.knownClosures || []).join(" | ") || "(none)");
 console.log("Destination:", dataset.meta.name, "|", dataset.meta.region, "| gateway:", dataset.meta.gateway);
 console.log("Tagline:", dataset.meta.tagline);
 console.log("Live:", dataset.live, "| sources:", Object.keys(dataset.sources || {}).length);

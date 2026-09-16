@@ -1,7 +1,10 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { chatJSON } from "@/lib/server/groq";
+import { chatJSON, type ChatMsg } from "@/lib/server/groq";
 import { ENV } from "@/lib/server/env";
+import type { TravelerMemory } from "@/lib/types";
+import { formatTravelerMemoryForPrompt } from "@/lib/memory";
+import { arbitrateConciergeFactCheck } from "@/lib/server/middleman";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -69,13 +72,29 @@ const ChatResponseSchema = z.object({
     })
     .nullable()
     .optional(),
+  memoryDelta: z
+    .object({
+      learnedFacts: z.array(z.string()).optional(),
+      dietary: z.array(z.string()).optional(),
+      vibes: z.array(z.string()).optional(),
+      style: z.array(z.string()).optional(),
+      pacing: z.array(z.string()).optional(),
+      budget: z.array(z.string()).optional(),
+      companionship: z.array(z.string()).optional(),
+      pastDecisions: z.array(z.string()).optional(),
+      keyNotes: z.array(z.string()).optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { message, tripContext } = body as {
+    const { message, history, travelerMemory, tripContext } = body as {
       message?: string;
+      history?: Array<{ role: "user" | "concierge" | "assistant" | "system"; text?: string; content?: string }>;
+      travelerMemory?: TravelerMemory;
       tripContext?: {
         destinationName?: string;
         durationDays?: number;
@@ -120,7 +139,13 @@ export async function POST(req: NextRequest) {
       .map((d) => `Day ${d.day} (${d.title}): ${d.stops.join("; ")}`)
       .join("\n");
 
-    const systemPrompt = `You are the Travelism AI Concierge, an elite, warm, ultra-knowledgeable personal travel director.
+    const memoryBlock = formatTravelerMemoryForPrompt(travelerMemory);
+    const middlemanCheck = arbitrateConciergeFactCheck(message, tripContext);
+    const middlemanAdvisory = middlemanCheck.hasConflictOrClosure && middlemanCheck.advisoryMarkdown
+      ? `\n\n🛡️ MIDDLEMAN ARBITER FACT-CHECK ENFORCEMENT:\n${middlemanCheck.advisoryMarkdown}\nYou MUST incorporate this critical local advisory/closure into your answer!`
+      : "";
+
+    const systemPrompt = `You are the Travelism AI Concierge, an elite, warm, ultra-knowledgeable personal travel director with persistent conversational memory.
 You have full real-time control to inspect, adjust, and completely sculpt the traveler's custom vacation itinerary:
 - Destination: ${dest}
 - Duration: ${days} days
@@ -132,11 +157,18 @@ You have full real-time control to inspect, adjust, and completely sculpt the tr
 - Booked Activities: ${exps}
 - Total Package Price: ${total}
 - Current Itinerary Schedule:
-${itinSummary || "Standard paced schedule"}
+${itinSummary || "Standard paced schedule"}${middlemanAdvisory}
+
+🧠 ACTIVE TRAVELER MEMORY & RECALLED CONTEXT:
+${memoryBlock}
 
 Your capabilities:
 1. Provide rich, charismatic travel recommendations with markdown tables, food guides, insider neighborhood secrets, weather tips, and packing essentials.
-2. RESPONSE FORMATTING GUIDELINES:
+2. CONVERSATIONAL MEMORY BEHAVIOR:
+   - You have complete multi-turn thread memory. Seamlessly connect to prior turns and follow-up prompts (e.g. "tell me more about the second one", "what was the price of that hostel?", "swap to what we talked about earlier").
+   - NEVER contradict or re-ask for preferences the traveler already provided in earlier messages or in the Active Traveler Memory above.
+   - Actively synthesize newly revealed traveler preferences (dietary, pace, budget limits, companions, dislikes, special requests) and return them in "memoryDelta" so they are permanently remembered across the entire journey.
+3. RESPONSE FORMATTING GUIDELINES:
    - Use clean Markdown with headers (### for main sections), clean bullet points (- **Item Name**: Description), and short digestible paragraphs.
    - For tabular data (visas, day-by-day comparisons, budget breakdowns, costs, packing lists), ALWAYS format as clean GitHub Flavored Markdown tables with line breaks between each row:
      | Country | Visa Required | Type | Processing Time | Approx Cost (INR) | Notes |
@@ -147,7 +179,7 @@ Your capabilities:
    - Use callouts for insider tips: "> 💡 **Pro-Tip**: Book VFS appointment 4 weeks in advance."
    - For FAQs, use: "- **Q: Can I use Schengen visa for Balkan countries?** Yes, a valid multi-entry Schengen visa..."
    - Always keep the tone warm, luxurious, proactive, and visually stunning.
-3. Direct Itinerary Actions:
+4. Direct Itinerary Actions:
    - When user asks to customize or clear a day (e.g. "make day 3 a rest / beach day", "I don't want to go out on day 4", "make day 2 a luxury spa and culinary day"):
      Return action: "replace_day_stops" with dayNum, dayTitle, and a list of realistic stops (e.g. kind="rest"|"meal"|"visit"|"hotel", label, start, end, note).
    - When user asks to add an activity or event (e.g. "add Haulover Sandbar Party to activities", "add yacht sunset cruise", "schedule deep sea diving"):
@@ -164,8 +196,8 @@ Your capabilities:
      Return action: "search_new_places" with value: "the place query".
    - When user asks to switch to wild camping, remove hotels, or change stay style (e.g. "switch to wild camping", "remove all hotels", "we don't need a hotel", "we are bikepacking with tents"):
      Return action: "set_stay_mode" with value: "wild_camping"|"none"|"hotels"|"homestays"|"campsites_refugios" and deltaLabel (e.g. 'Switched to Wild Camping (₹0 lodging)').
-   - When user asks to adjust hotel tier, trip duration, group size, or pace:
-     Return action: "upgrade_hotel" | "cheaper_hotel" | "set_duration" (days) | "add_days" (+/- days) | "set_travelers" (n) | "set_pace" ("comfortable"|"balanced"|"fast") | "budget_target" (INR).
+   - When user asks to adjust hotel tier, trip duration, group size, or pace (e.g. "hotel under 2k", "switch to a cheaper stay around 1500"):
+     Return action: "budget_target" (with numeric value in INR, e.g. 1500 or 2000) | "upgrade_hotel" | "cheaper_hotel" | "set_duration" (days) | "add_days" (+/- days) | "set_travelers" (n) | "set_pace" ("comfortable"|"balanced"|"fast").
    - For general advice/conversations: Return action: { "kind": "none" }.
 
 Always return valid JSON:
@@ -180,14 +212,39 @@ Always return valid JSON:
     "stop": { "kind": "...", "label": "...", "start": "...", "end": "...", "note": "..." },
     "activityData": { "name": "...", "category": "adventure"|"water"|"tour"|"cultural"|"wellness"|"food_exp"|"nightlife", "price": 2500, "blurb": "...", "durationHours": 3 },
     "deltaLabel": "Brief tag (e.g. 'Day 3 → Rest & Beach Leisure')"
+  },
+  "memoryDelta": {
+    "learnedFacts": ["Traveler is vegetarian", "Prefers boutique hotels with scenic views"],
+    "dietary": ["Vegetarian"],
+    "vibes": ["Scenic photography"],
+    "style": ["Boutique"],
+    "pacing": ["Relaxed mornings"],
+    "budget": ["Target ₹3,00,000"],
+    "companionship": ["Couple"],
+    "pastDecisions": ["Chose lakeside view room"],
+    "keyNotes": ["Looking for authentic local craft workshops"]
   }
 }`;
 
+    // Construct multi-turn messages array
+    const chatMessages: ChatMsg[] = [{ role: "system", content: systemPrompt }];
+
+    // Append up to the last 14 history turns
+    if (history && Array.isArray(history)) {
+      const recentHistory = history.slice(-14);
+      for (const h of recentHistory) {
+        const content = (h.text || h.content || "").trim();
+        if (!content) continue;
+        const role = h.role === "user" ? "user" : "assistant";
+        chatMessages.push({ role, content });
+      }
+    }
+
+    // Append current user message
+    chatMessages.push({ role: "user", content: message });
+
     const res = await chatJSON(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: message },
-      ],
+      chatMessages,
       ChatResponseSchema,
       {
         signal: req.signal,
@@ -195,6 +252,15 @@ Always return valid JSON:
         maxTokens: 4096,
       }
     );
+
+    // If model returned no action but Middleman detected an explicit budget target action, apply it
+    if ((!res.action || res.action.kind === "none") && middlemanCheck.suggestedAction) {
+      res.action = {
+        kind: middlemanCheck.suggestedAction.kind as any,
+        value: middlemanCheck.suggestedAction.value,
+        deltaLabel: middlemanCheck.suggestedAction.deltaLabel,
+      };
+    }
 
     return json(res, 200);
   } catch (err) {
