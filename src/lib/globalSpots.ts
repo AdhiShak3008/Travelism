@@ -11,6 +11,8 @@ export interface DiscoveredSpot {
   quote: string;
   author: string;
   imageUrl: string;
+  /** Additional verified images for the passport gallery scroller (optional). */
+  images?: string[];
   vibeTags: string[];
 }
 

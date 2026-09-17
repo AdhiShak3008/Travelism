@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { tavilySearch } from "./tavily";
+import { freeWebSearch } from "./freeSearch";
 import { chatJSON } from "./groq";
 import { ENV } from "./env";
 import type { RouteEstimate } from "./flightEstimator";
@@ -35,19 +36,26 @@ export async function enrichRoute(
   est: RouteEstimate,
   signal?: AbortSignal
 ): Promise<EnrichedRoute> {
-  if (!ENV.TAVILY_API_KEY || !ENV.GROQ_API_KEY) return { est };
+  // Needs the LLM to extract facts; discovery is free-first (works without Tavily).
+  if (!ENV.GROQ_API_KEY) return { est };
   const origin = originRaw.trim();
   const gw = gatewayRaw.split(/[(,]/)[0].trim();
   if (!origin || !gw) return { est };
 
   try {
-    const results = await tavilySearch(
-      `${origin} to ${gw} flight duration number of stops typical route via which hub`,
-      { maxResults: 4, depth: "basic", signal }
-    );
-    if (!results.length) return { est };
-    const corpus = results
-      .map((r) => `URL: ${r.url}\n${r.content.slice(0, 900)}`)
+    const routeQuery = `${origin} to ${gw} flight duration number of stops typical route via which hub`;
+    // Free DuckDuckGo search first; only fall back to Tavily if thin + key set.
+    let corpusItems = (await freeWebSearch(routeQuery, 4, signal).catch(() => [])).map((r) => ({
+      url: r.url,
+      text: r.snippet || "",
+    }));
+    if (corpusItems.length < 2 && ENV.TAVILY_API_KEY) {
+      const results = await tavilySearch(routeQuery, { maxResults: 4, depth: "basic", signal }).catch(() => []);
+      corpusItems = [...corpusItems, ...results.map((r) => ({ url: r.url, text: r.content || "" }))];
+    }
+    if (!corpusItems.length) return { est };
+    const corpus = corpusItems
+      .map((r) => `URL: ${r.url}\n${r.text.slice(0, 900)}`)
       .join("\n\n---\n\n");
 
     const hint = await chatJSON(
@@ -85,7 +93,7 @@ ${corpus}`,
       blended.fareHigh = Math.round((blended.fareHigh + hint.fareHighInr) / 2 / 100) * 100;
     }
 
-    return { est: blended, hint, sourceUrl: results[0]?.url };
+    return { est: blended, hint, sourceUrl: corpusItems[0]?.url };
   } catch {
     return { est };
   }

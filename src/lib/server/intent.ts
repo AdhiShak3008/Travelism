@@ -10,8 +10,13 @@ import { chatJSON } from "./groq";
 export function cleanDreamInput(raw: string): string {
   if (!raw) return "";
   let s = raw.trim();
-  // Strip conversational request prefixes
-  s = s.replace(/^(?:plan(?:\s+a)?(?:\s+trip|\s+tour|\s+vacation|\s+package)?\s+to|explore|take\s+me\s+to|i\s+want\s+to\s+visit|looking\s+for|show\s+me|give\s+me|i'd\s+like\s+to\s+go\s+to|i\s+want|trip\s+to|tour\s+of)\s+/i, "");
+  // Strip conversational request prefixes. Loop so stacked fillers like
+  // "i wanna explore ..." ("i wanna" + "explore") are fully peeled off.
+  const PREFIX = /^(?:plan(?:\s+a)?(?:\s+trip|\s+tour|\s+vacation|\s+package)?\s+to|i(?:'d)?\s*(?:wanna|wan(?:t|na)|would\s+like|want|feel\s+like)(?:\s+to)?(?:\s+(?:go(?:\s+to)?|visit|see|explore|check\s+out|travel\s+to|head\s+to))?|let'?s(?:\s+go(?:\s+to)?)?|gonna(?:\s+(?:go\s+to|visit|explore))?|take\s+me\s+to|looking\s+for|show\s+me|give\s+me|explore|discover|visit|see|go\s+to|head\s+to|travel\s+to|fly\s+to|trip\s+to|tour\s+of)\s+/i;
+  // peel up to 3 stacked prefixes
+  for (let i = 0; i < 3 && PREFIX.test(s); i++) {
+    s = s.replace(PREFIX, "").trim();
+  }
   // Strip trailing package fluff like ", the whole package", "the whole thing", "all inclusive", etc.
   s = s.replace(/(?:,\s*)?(?:the\s+)?(?:whole|full|complete|entire|all-inclusive|all\s*inclusive)\s*(?:package|tour|trip|deal|experience|circuit|vacation|holiday|itinerary|thing|deal)\s*$/i, "");
   s = s.replace(/(?:,\s*)?(?:the\s+whole|the\s+full|all\s+of\s+it|the\s+entire\s+thing)\s*$/i, "");
@@ -191,6 +196,24 @@ const IntentSchema = z.object({
   destination: z.string(),
   destinations: z.array(z.string()).default([]),
   region: z.string().optional(),
+  // ---- Scout geographic classification & vagueness detection ----
+  /** What kind of place the user actually named. */
+  destinationType: z
+    .enum(["city", "country", "region", "landmark", "area", "multi", "fictional", "vague", "unknown"])
+    .optional()
+    .default("unknown"),
+  /** For fictional/pop-culture references: what it maps to, shown to the user. */
+  culturalNote: z.string().optional(),
+  /** The concrete base city to actually anchor the search (e.g. landmark "Taj Mahal" -> "Agra"). */
+  resolvedHub: z.string().optional(),
+  /** 0-1 how confident Scout is that it correctly identified a real place. */
+  geoConfidence: z.coerce.number().min(0).max(1).optional().default(0.8),
+  /** True when the request is too vague to pin to a real place. */
+  isVague: z.boolean().optional().default(false),
+  /** Why it's vague, shown to the user (e.g. "You described a vibe, not a place"). */
+  vagueReason: z.string().optional(),
+  /** Concrete destinations that would satisfy a vague request (for clarification chips). */
+  suggestedDestinations: z.array(z.string()).max(6).optional().default([]),
   originCity: z.string().optional(),
   durationDays: optDays,
   travelers: optTravelers,
@@ -202,6 +225,8 @@ const IntentSchema = z.object({
   deprioritized: z.array(z.string()).max(8).default([]),
   accessibilityNeeds: z.array(z.string()).max(5).default([]),
   avoidEarlyFlights: z.boolean().optional(),
+  /** Dietary constraints carried from the traveler's profile (for Foodie). */
+  dietary: z.array(z.string()).max(8).optional(),
 });
 export type Intent = z.infer<typeof IntentSchema>;
 
@@ -222,24 +247,67 @@ export async function parseIntent(dream: string, signal?: AbortSignal): Promise<
     [
       {
         role: "system",
-        content: `You interpret a traveler's free-text dream into structured intent for a travel investigation system. Return STRICT JSON only.
-CRITICAL DESTINATION RULES:
-1. NEVER include conversational baggage or booking fluff (e.g. "the whole", "the package", "full package", "tour of", "trip to", "all-inclusive") inside "destination" or "destinations".
-2. MULTI-DESTINATION JOURNEYS & REGIONAL CIRCUITS:
-   - If the traveler describes multiple destinations (e.g. "Paris to Rome", "Tokyo & Kyoto", "Lake Como then Mallorca"), set "destination" to the combined journey title (e.g. "Paris & Rome") and "destinations" to the ordered array ["Paris", "Rome"].
-   - If the traveler names a broad geographic region or circuit (e.g. "Scandinavia", "The Nordics", "Eastern Europe", "The Balkans", "Benelux", "Patagonia", "Golden Triangle"):
-     Decompose the region into its premier constituent hub cities in "destinations" (e.g. for Scandinavia: ["Copenhagen", "Oslo", "Stockholm", "Bergen"]).
-3. Set "region" to the broader administrative region or countries (e.g. "Northern Europe / Scandinavia").
-4. Capture all activities, sights, and vibes across all destinations in "priorities".`,
+        content: `You are SCOUT, the destination-resolution agent for a travel investigation system. Your job is to (a) classify exactly what kind of place the traveler named, (b) resolve it to a concrete base city to search, and (c) honestly detect when the request is too VAGUE to pin to a real place. Return STRICT JSON only.
+
+GEOGRAPHIC CLASSIFICATION — set "destinationType" to ONE of:
+- "city"     → a specific city/town (e.g. "Kyoto", "Udaipur", "Lisbon").
+- "country"  → a whole country (e.g. "Japan", "France", "Sri Lanka"). Pick its best first-time base city as "resolvedHub" (Japan → "Tokyo", France → "Paris", Sri Lanka → "Colombo").
+- "region"   → a multi-city area/circuit OR a named mountain range / natural region (e.g. "Scandinavia", "Kerala", "Tuscany", "the Appalachians", "the Rockies", "the Alps", "the Dolomites"). Input may be lowercase or slightly misspelled (e.g. "american appalachias") — still classify it as a real region and decompose into practical hub cities in "destinations" (e.g. Appalachians → ["Asheville","Gatlinburg","Shenandoah","Roanoke"]). Do NOT mark a named geographic range as "vague".
+- "landmark" → a specific sight/monument/park (e.g. "Taj Mahal", "Eiffel Tower", "Machu Picchu"). Set "resolvedHub" to the base city travelers actually stay in (Taj Mahal → "Agra", Machu Picchu → "Cusco", Eiffel Tower → "Paris").
+- "area"     → a natural feature/sub-area (e.g. "Lake Como", "Amalfi Coast", "Nubra Valley"). Set "resolvedHub" to the practical base.
+- "multi"    → several distinct destinations (e.g. "Paris to Rome"). Fill "destinations" in order.
+- "fictional"→ a MOVIE / TV / GAME / BOOK reference or fictional setting, NOT a literal place (e.g. "places from GTA 6", "Game of Thrones locations", "where Lord of the Rings was filmed", "Emily in Paris", "the Harry Potter world", "Wakanda"). Map it to the REAL-WORLD locations it's based on or filmed at. See POP-CULTURE below.
+- "vague"    → NO real place is named; only a vibe/theme/criteria (e.g. "somewhere warm", "a beach holiday", "mountains and snow", "anywhere in Europe", "a romantic getaway", "somewhere cheap"). See VAGUENESS below.
+- "unknown"  → cannot tell / gibberish.
+
+POP-CULTURE / FICTIONAL MAPPING (destinationType "fictional"):
+- Identify the media and map it to the REAL destinations it depicts or was filmed in. Set "destinations" to those real places and "resolvedHub" to the primary one.
+- SPECIFIC TITLE vs. WHOLE FRANCHISE — read carefully:
+  - A specific installment maps to ITS setting: "GTA 6 / Vice City" → Miami & Florida; "GTA 5 / Los Santos" → Los Angeles; "GTA 4 / Liberty City" → New York; "GTA San Andreas" → Los Angeles, San Francisco & Las Vegas.
+  - A FRANCHISE / SERIES reference — bare "GTA", "the GTA games", "the full GTA package", "the whole GTA series", "all the GTA cities" — means a MULTI-CITY tour of ALL the real cities across the series. For GTA that's destinations ["Miami","Los Angeles","New York","Las Vegas","San Francisco"], resolvedHub "Miami", and destinationType "fictional" (multi-city). NEVER collapse a franchise request to just one game's city.
+  - Likewise: "James Bond locations" → many (London, Nassau, Venice, Montenegro…); "Assassin's Creed cities" → the real cities each game recreates.
+  Other examples:
+  - "Game of Thrones locations" → destinations ["Dubrovnik","Reykjavik","Belfast","Seville"], resolvedHub "Dubrovnik".
+  - "Lord of the Rings / Middle-earth" → New Zealand → destinations ["Queenstown","Wellington","Matamata"], resolvedHub "Queenstown".
+  - "Harry Potter" → destinations ["Edinburgh","Oxford","London"], resolvedHub "Edinburgh".
+  - "Emily in Paris" → destinations ["Paris"], resolvedHub "Paris".
+- ALWAYS set "culturalNote": a friendly one-liner. For a franchise, say so, e.g. "The GTA games are set across fictionalized Miami, LA, New York, Vegas & San Francisco — here's a real-world tour of all of them." For a single title: "GTA 6 is set in a fictionalized Miami & Florida — here's the real thing." NEVER present the fictional name as a bookable place.
+- Treat words like "package", "full", "whole", "complete" here as meaning "the entire series / everything", NOT booking fluff.
+- If a fictional world has NO real-world basis (pure fantasy), map to the closest real filming/inspiration location and say so in culturalNote.
+
+RESOLUTION:
+- "resolvedHub": the SINGLE concrete city to anchor the search on. For city=itself; country/landmark/area=the real base city; region/multi=first hub. For vague, leave empty.
+- "geoConfidence": 0-1. High (>0.85) for clear real places; low (<0.5) for vague/ambiguous/misspelled.
+
+VAGUENESS DETECTION (be honest — do NOT invent a specific place the user didn't name):
+- If the traveler describes only a vibe, climate, budget, season, or activity WITHOUT naming a real city/country/region/landmark, set "isVague": true, "destinationType": "vague".
+- "vagueReason": one friendly sentence, e.g. "You described the kind of trip, not a place — here are a few that fit."
+- "suggestedDestinations": 3-6 concrete real destinations that match the described vibe (e.g. for "somewhere warm with beaches in December" → ["Goa","Bali","Phuket","Zanzibar","Maldives"]). These become clarification options.
+- When vague, still fill "destination" with a short label of the vibe (e.g. "A warm beach escape") but keep "destinations" empty.
+
+DESTINATION HYGIENE:
+1. NEVER include booking fluff ("the whole", "full package", "tour of", "trip to", "all-inclusive") inside "destination"/"destinations".
+2. MULTI/REGION: combined title in "destination", ordered hubs in "destinations".
+3. "region": broader administrative region/countries.
+4. Capture activities/vibes across all destinations in "priorities".`,
       },
       {
         role: "user",
-        content: `DREAM: "${cleanedDream || dream}"
+        content: `RAW REQUEST: "${dream}"
+NORMALIZED: "${cleanedDream || dream}"
+(Use the RAW REQUEST to judge intent — words like "full", "whole", "package", "series", "all the ... cities" signal the ENTIRE franchise/series, not one title.)
 
 Return JSON:
 {
-  "destination": combined journey title if multi-destination (e.g. "Scandinavia (Copenhagen, Oslo & Stockholm)", "Lake Como & Mallorca", "Paris & Rome") or primary destination if single,
-  "destinations": array of visited destinations in chronological sequence, e.g. ["Copenhagen", "Oslo", "Stockholm", "Bergen"] or ["Paris", "Rome"],
+  "destination": combined journey title if multi-destination (e.g. "Scandinavia (Copenhagen, Oslo & Stockholm)", "Lake Como & Mallorca", "Paris & Rome"), primary destination if single, or a short vibe label if vague (e.g. "A warm beach escape"),
+  "destinations": array of visited destinations in chronological sequence, e.g. ["Copenhagen", "Oslo", "Stockholm", "Bergen"] or ["Paris", "Rome"] (empty if vague),
+  "destinationType": "city" | "country" | "region" | "landmark" | "area" | "multi" | "fictional" | "vague" | "unknown",
+  "culturalNote": friendly one-liner mapping a fictional/media reference to real places (only if destinationType is "fictional"),
+  "resolvedHub": the single concrete base city to search (e.g. "Agra" for Taj Mahal, "Tokyo" for Japan, "Miami" for GTA 6); empty if vague,
+  "geoConfidence": 0.0-1.0 confidence you identified a real place,
+  "isVague": true if only a vibe/theme was given with no real place,
+  "vagueReason": one friendly sentence explaining the vagueness (only if isVague),
+  "suggestedDestinations": 3-6 concrete real destinations matching the vibe (only if isVague),
   "region": broader region or countries (e.g. "Northern Europe / Scandinavia" or "Western Europe"),
   "originCity": where they're departing from if mentioned,
   "durationDays": number if mentioned/implied (e.g. "7 days" => 7),
@@ -260,9 +328,22 @@ Return JSON:
   );
 
   let destination = cleanDestinationName(parsed.destination);
+  const resolvedHub = parsed.resolvedHub ? cleanDestinationName(parsed.resolvedHub) : "";
   let destinations = (parsed.destinations && parsed.destinations.length > 0 ? parsed.destinations : [])
     .map(cleanDestinationName)
     .filter(Boolean);
+
+  // For a country/landmark/area, anchor the working destination to the resolved
+  // base city so all downstream searches (places/hotels/experiences) hit a real
+  // hub — e.g. "Japan" → Tokyo, "Taj Mahal" → Agra, "Amalfi Coast" → Sorrento.
+  if (
+    !parsed.isVague &&
+    resolvedHub &&
+    ["country", "landmark", "area"].includes(parsed.destinationType || "") &&
+    destinations.length <= 1
+  ) {
+    destinations = [resolvedHub];
+  }
 
   if (destinations.length === 0) {
     if (destination.includes("&")) {
@@ -274,32 +355,49 @@ Return JSON:
     }
   }
 
-  // Check known regional circuits if single broad destination was returned
-  const lookupKey = destination.toLowerCase().replace(/^(?:the\s+)/i, "").trim();
-  const rawLookupKey = cleanedDream.toLowerCase().replace(/^(?:the\s+)/i, "").trim();
-  const matchedCircuit = KNOWN_REGIONAL_CIRCUITS[lookupKey] || KNOWN_REGIONAL_CIRCUITS[rawLookupKey] ||
-    Object.entries(KNOWN_REGIONAL_CIRCUITS).find(([k]) => lookupKey.includes(k) || rawLookupKey.includes(k))?.[1];
-
   let region = parsed.region;
   let durationDays = parsed.durationDays;
   let priorities = parsed.priorities || [];
 
-  if (matchedCircuit && (destinations.length <= 1 || destinations.some((d) => d.toLowerCase().includes("scandinavia") || d.toLowerCase().includes("balkan") || d.toLowerCase().includes("nordic") || d.toLowerCase().includes("baltic")))) {
-    destinations = [...matchedCircuit.destinations];
-    destination = matchedCircuit.canonicalTitle;
-    region = region || matchedCircuit.region;
-    durationDays = durationDays || matchedCircuit.defaultDays;
-    priorities = Array.from(new Set([...(matchedCircuit.priorities || []), ...priorities]));
+  // Live-first: trust Scout's own decomposition of a region into hubs. Only when
+  // Scout returned a SINGLE broad label with no real hubs do we fall back to the
+  // legacy circuit hints (kept purely as a resilience net, not the primary path).
+  const scoutDecomposed = destinations.length >= 2;
+  if (!scoutDecomposed) {
+    const lookupKey = destination.toLowerCase().replace(/^(?:the\s+)/i, "").trim();
+    const rawLookupKey = cleanedDream.toLowerCase().replace(/^(?:the\s+)/i, "").trim();
+    const matchedCircuit =
+      KNOWN_REGIONAL_CIRCUITS[lookupKey] ||
+      KNOWN_REGIONAL_CIRCUITS[rawLookupKey] ||
+      Object.entries(KNOWN_REGIONAL_CIRCUITS).find(([k]) => lookupKey.includes(k) || rawLookupKey.includes(k))?.[1];
+    if (matchedCircuit) {
+      destinations = [...matchedCircuit.destinations];
+      destination = matchedCircuit.canonicalTitle;
+      region = region || matchedCircuit.region;
+      durationDays = durationDays || matchedCircuit.defaultDays;
+      priorities = Array.from(new Set([...(matchedCircuit.priorities || []), ...priorities]));
+    }
   }
 
   return {
     ...parsed,
     destination,
     destinations,
+    resolvedHub: resolvedHub || destinations[0] || destination,
     region,
     durationDays,
     priorities,
     stayMode: parsed.stayMode || stayModeFallback || "hotels",
     isSelfSupported: parsed.isSelfSupported ?? isSelfSupportedFallback,
   };
+}
+
+/** Short user-facing note describing how Scout interpreted the request. */
+export function scoutInterpretationNote(intent: Intent): string | undefined {
+  if (intent.destinationType === "fictional" && intent.culturalNote) return intent.culturalNote;
+  if (intent.destinationType === "landmark" && intent.resolvedHub)
+    return `${intent.destination} is best explored from ${intent.resolvedHub} — anchoring your trip there.`;
+  if (intent.destinationType === "country" && intent.resolvedHub)
+    return `Starting your ${intent.destination} trip from ${intent.resolvedHub}.`;
+  return undefined;
 }

@@ -4,13 +4,17 @@ import { CAN_INVESTIGATE_LIVE, CAP } from "@/lib/server/env";
 import { getDb, schema } from "@/lib/server/db/client";
 import { eq, desc } from "drizzle-orm";
 import type { DestinationDataset } from "@/lib/research/provider";
+import { readDatasetCache, writeDatasetCache, cacheMetrics } from "@/lib/server/datasetCache";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // allow long crawls where the platform permits
 
 // Server-Sent Events: streams live agent progress, then the final dataset.
 export async function POST(req: NextRequest) {
-  const { dream } = (await req.json().catch(() => ({}))) as { dream?: string };
+  const { dream, profileHints } = (await req.json().catch(() => ({}))) as {
+    dream?: string;
+    profileHints?: import("@/lib/server/investigate").ProfileHints;
+  };
   if (!dream || !dream.trim()) {
     return new Response(JSON.stringify({ error: "Missing dream" }), { status: 400 });
   }
@@ -26,28 +30,66 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      };
       const send = (event: string, data: unknown) => {
+        if (closed) return;
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
       const emit = (e: ProgressEvent) => send("progress", e);
 
+      // Background stale-while-revalidate: refresh a stale entry after the
+      // response has been sent. Fire-and-forget, never blocks the client.
+      const revalidate = () => {
+        void (async () => {
+          try {
+            const fresh = await investigate(dream, () => {}, undefined, profileHints);
+            await writeDatasetCache(dream, fresh);
+            await writeCache(dream, fresh);
+          } catch {
+            /* revalidation is best-effort */
+          }
+        })();
+      };
+
       try {
-        // Serve fresh cache if present (< 24h) to be fast + polite.
-        const cached = await readCache(dream);
-        if (cached) {
-          send("cache", { hit: true });
-          send("done", cached);
-          controller.close();
-          return;
+        // Shared cache applies only to anonymous (no-profile) runs — a personal
+        // Travel-DNA profile changes the research lens, so profiled runs always
+        // investigate fresh (and are never written to the shared cache).
+        const hasProfile = !!profileHints && Object.keys(profileHints).length > 0;
+
+        if (!hasProfile) {
+          // ---- Cache-aside read: L1 (memory) → L2 (Redis) → miss ----
+          const cached = await readDatasetCache(dream, req.signal);
+          if (cached.dataset) {
+            send("cache", { hit: true, source: cached.source, stale: cached.stale, metrics: cacheMetrics() });
+            send("done", cached.dataset);
+            safeClose();
+            // stale hit → refresh in the background so the next visitor is fresh
+            if (cached.stale) revalidate();
+            return;
+          }
+          send("cache", { hit: false, source: "miss", metrics: cacheMetrics() });
         }
 
-        const dataset = await investigate(dream, emit, req.signal);
-        await writeCache(dream, dataset);
+        const dataset = await investigate(dream, emit, req.signal, profileHints);
+        if (!hasProfile) {
+          await writeDatasetCache(dream, dataset); // fill L1 + L2
+          await writeCache(dream, dataset); // durable per-destination store
+        }
         send("done", dataset);
       } catch (err) {
         send("error", { message: err instanceof Error ? err.message : "Investigation failed" });
       } finally {
-        controller.close();
+        safeClose();
       }
     },
   });
@@ -61,23 +103,8 @@ export async function POST(req: NextRequest) {
   });
 }
 
-async function readCache(dream: string): Promise<DestinationDataset | null> {
-  if (!CAP.db) return null;
-  const db = getDb();
-  if (!db) return null;
-  try {
-    // Cache key by resolved destination is ideal, but we cache by dream-derived
-    // destination after parse; here we look up recent completed investigations
-    // whose destinationKey matches a naive extraction of the dream. Since we
-    // don't know the destination until parse, we skip pre-parse cache and rely
-    // on per-destination cache written post-investigation.
-    void dream;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
+// Durable per-destination store (Postgres): keeps a queryable history of
+// completed investigations. Complements the fast L1/L2 semantic cache above.
 async function writeCache(dream: string, dataset: DestinationDataset) {
   if (!CAP.db) return;
   const db = getDb();

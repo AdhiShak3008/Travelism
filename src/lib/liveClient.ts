@@ -18,6 +18,7 @@ export interface CapabilitySummary {
   youtube: boolean;
   places: boolean;
   flights: boolean;
+  redis?: boolean;
 }
 
 export async function fetchCapabilities(): Promise<CapabilitySummary> {
@@ -26,8 +27,24 @@ export async function fetchCapabilities(): Promise<CapabilitySummary> {
     if (!res.ok) throw new Error();
     return (await res.json()) as CapabilitySummary;
   } catch {
-    return { live: false, llm: false, search: false, db: false, youtube: false, places: false, flights: false };
+    return { live: false, llm: false, search: false, db: false, youtube: false, places: false, flights: false, redis: false };
   }
+}
+
+/** Cache telemetry surfaced from the investigate SSE `cache` event. */
+export interface CacheInfo {
+  hit: boolean;
+  source?: "l1" | "l2" | "miss";
+  stale?: boolean;
+  metrics?: {
+    hits: number;
+    misses: number;
+    l1Hits: number;
+    l2Hits: number;
+    total: number;
+    hitRate: number;
+    redis: boolean;
+  };
 }
 
 /**
@@ -35,15 +52,48 @@ export async function fetchCapabilities(): Promise<CapabilitySummary> {
  * resolves with the final dataset. Throws on error/unavailable so the caller
  * can fall back to the built-in dataset honestly.
  */
+export interface DiscoverCard {
+  name: string;
+  country: string;
+  tag: string;
+  image: string;
+  blurb: string;
+}
+
+/** Fetch a fresh batch of random real global destinations with verified images. */
+export async function fetchDiscoverPlaces(count = 3, signal?: AbortSignal): Promise<DiscoverCard[]> {
+  try {
+    const res = await fetch(`/api/discover?count=${count}`, { cache: "no-store", signal });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { places?: DiscoverCard[] };
+    return data.places ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export interface ProfileHints {
+  budgetTier?: "economical" | "balanced" | "premium";
+  pace?: "comfortable" | "balanced" | "fast";
+  priorities?: string[];
+  accessibilityNeeds?: string[];
+  avoidEarlyFlights?: boolean;
+  dietary?: string[];
+  stayMode?: string;
+  currency?: string;
+}
+
 export async function runLiveInvestigation(
   dream: string,
   onProgress: (p: LiveProgress) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  profileHints?: ProfileHints,
+  onCache?: (info: CacheInfo) => void
 ): Promise<DestinationDataset> {
   const res = await fetch("/api/investigate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dream }),
+    body: JSON.stringify({ dream, profileHints }),
     signal,
   });
 
@@ -72,6 +122,7 @@ export async function runLiveInvestigation(
       const { event, data } = parseFrame(frame);
       if (!event) continue;
       if (event === "progress") onProgress(data as LiveProgress);
+      else if (event === "cache") onCache?.(data as CacheInfo);
       else if (event === "done") dataset = data as DestinationDataset;
       else if (event === "error") errorMsg = (data as { message?: string }).message ?? "error";
     }

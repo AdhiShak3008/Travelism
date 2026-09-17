@@ -24,6 +24,10 @@ export interface CanonicalEntity {
   geofenceRadiusKm: number;
   knownClosures?: string[];
   subHubs?: string[];
+  /** Real air gateway for booking flights when the hub has no/limited airport (e.g. Agra → Delhi) */
+  airGateway?: string;
+  /** How travelers actually reach the hub from the air gateway (train/cab + time) */
+  gatewayTransfer?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +183,8 @@ export function resolveCanonicalEntity(query: string, parentRegion?: string): Ca
       geofenceRadiusKm: 25,
       knownClosures: ["Friday (Closed all day for Jumma prayers; opens Sat-Thu sunrise to sunset)"],
       subHubs: ["Agra", "Fatehpur Sikri"],
+      airGateway: "Delhi (DEL)",
+      gatewayTransfer: "Gatimaan Express train (~1h 40m) or Yamuna Expressway cab (~3h) from Delhi",
     };
   }
 
@@ -192,6 +198,8 @@ export function resolveCanonicalEntity(query: string, parentRegion?: string): Ca
       geofenceRadiusKm: 35,
       knownClosures: ["Taj Mahal is closed on Fridays"],
       subHubs: ["Agra Fort", "Taj Ganj", "Fatehpur Sikri", "Mehtab Bagh"],
+      airGateway: "Delhi (DEL)",
+      gatewayTransfer: "Gatimaan Express train (~1h 40m) or Yamuna Expressway cab (~3h) from Delhi",
     };
   }
 
@@ -354,14 +362,23 @@ export async function healCandidateImages(
     return verifiedList;
   }
 
-  // Silently heal with curated place or activity asset
+  // ANTI-HALLUCINATION: for a NAMED place/landmark, a generic curated stand-in
+  // would be a wrong photo of a specific spot — worse than showing nothing.
+  // Return [] so the card renders a clean, honest placeholder instead.
+  const nm = entityName.toLowerCase();
+  const isNamedLandmark =
+    (category === "attraction" || category === "landscape" || category === "exterior") &&
+    // a specific proper-noun place, not a generic scenery slot
+    !/^(scenic|destination|city center|downtown|old town|viewpoint)\b/.test(nm);
+  if (isNamedLandmark) {
+    return [];
+  }
+
+  // Generic categories (hotels/food) may use a representative curated asset.
   const curatedFallback =
-    category === "attraction" || category === "landscape" || category === "exterior"
-      ? getCuratedPlaceImage(entityName, location, "core")
-      : category === "food"
+    category === "food"
       ? img("food", "food")
       : img("hotelroom", "room", "official");
-
   return [curatedFallback];
 }
 

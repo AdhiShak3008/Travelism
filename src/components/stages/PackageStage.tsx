@@ -7,7 +7,9 @@ import { useTrip } from "@/store/tripStore";
 import { inr, cx, formatDateRange } from "@/lib/format";
 import { costTotals } from "@/lib/engine";
 import { HotelCard } from "@/components/ui/HotelCard";
+import { StaysExplorer } from "@/components/ui/StaysExplorer";
 import { FlightCard, TransportCard, PermitCard, FoodCard, ConflictBanner } from "@/components/ui/ComponentCards";
+import { FlightsExplorer } from "@/components/ui/FlightsExplorer";
 import { ExperienceCard } from "@/components/ui/ExperienceCard";
 import { CostPanel } from "@/components/ui/CostPanel";
 import { JourneyRibbon } from "@/components/ui/JourneyRibbon";
@@ -41,7 +43,9 @@ export function PackageStage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
   const [hotelSearch, setHotelSearch] = useState<string>("");
+  const [staysView, setStaysView] = useState<"explore" | "list">("explore");
   const [flightFilter, setFlightFilter] = useState<string>("all");
+  const [flightsView, setFlightsView] = useState<"explore" | "detailed">("explore");
   const [copied, setCopied] = useState(false);
 
   if (!dataset) return null;
@@ -677,35 +681,57 @@ Generated with Travelism 2.0`;
                 </button>
               </div>
 
-              {/* List of Hotels */}
-              <div className="space-y-5">
-                {filteredHotels.length === 0 ? (
-                  <div className="rounded-2xl border border-line bg-card p-8 text-center text-ink-soft">
-                    <p className="text-sm font-medium">No stays match your current filter.</p>
+              {/* View toggle: Google-style explorer vs detailed cards */}
+              {filteredHotels.length > 0 && (
+                <div className="flex items-center justify-end">
+                  <div className="inline-flex items-center gap-1 rounded-full border border-line bg-paper-2 p-1">
                     <button
-                      onClick={() => {
-                        setSelectedHubFilter("all");
-                        setHotelTierFilter("all");
-                        setHotelSearch("");
-                      }}
-                      className="mt-2 text-xs font-bold text-brand hover:underline"
+                      onClick={() => setStaysView("explore")}
+                      className={cx(
+                        "rounded-full px-3 py-1 text-xs font-bold transition",
+                        staysView === "explore" ? "bg-brand text-paper shadow-sm" : "text-ink-soft hover:text-ink"
+                      )}
                     >
-                      Reset filters →
+                      🗺️ Map view
+                    </button>
+                    <button
+                      onClick={() => setStaysView("list")}
+                      className={cx(
+                        "rounded-full px-3 py-1 text-xs font-bold transition",
+                        staysView === "list" ? "bg-brand text-paper shadow-sm" : "text-ink-soft hover:text-ink"
+                      )}
+                    >
+                      📋 Detailed cards
                     </button>
                   </div>
-                ) : (
-                  filteredHotels.map((h) => {
+                </div>
+              )}
+
+              {/* List of Hotels */}
+              {filteredHotels.length === 0 ? (
+                <div className="rounded-2xl border border-line bg-card p-8 text-center text-ink-soft">
+                  <p className="text-sm font-medium">No stays match your current filter.</p>
+                  <button
+                    onClick={() => {
+                      setSelectedHubFilter("all");
+                      setHotelTierFilter("all");
+                      setHotelSearch("");
+                    }}
+                    className="mt-2 text-xs font-bold text-brand hover:underline"
+                  >
+                    Reset filters →
+                  </button>
+                </div>
+              ) : staysView === "explore" ? (
+                <StaysExplorer hotels={filteredHotels} destinationName={blob.destinationName} />
+              ) : (
+                <div className="space-y-5">
+                  {filteredHotels.map((h) => {
                     const isSelected = blob.hotels.some((x) => x.id === h.id);
-                    return (
-                      <HotelCard
-                        key={h.id}
-                        hotel={h}
-                        selected={isSelected}
-                      />
-                    );
-                  })
-                )}
-              </div>
+                    return <HotelCard key={h.id} hotel={h} selected={isSelected} />;
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -740,6 +766,26 @@ Generated with Travelism 2.0`;
                     {f.label}
                   </button>
                 ))}
+                <div className="ml-auto inline-flex items-center gap-1 rounded-full border border-line bg-paper-2 p-1">
+                  <button
+                    onClick={() => setFlightsView("explore")}
+                    className={cx(
+                      "rounded-full px-3 py-1 text-xs font-bold transition",
+                      flightsView === "explore" ? "bg-brand text-paper shadow-sm" : "text-ink-soft hover:text-ink"
+                    )}
+                  >
+                    ✈️ Flights view
+                  </button>
+                  <button
+                    onClick={() => setFlightsView("detailed")}
+                    className={cx(
+                      "rounded-full px-3 py-1 text-xs font-bold transition",
+                      flightsView === "detailed" ? "bg-brand text-paper shadow-sm" : "text-ink-soft hover:text-ink"
+                    )}
+                  >
+                    📋 Detailed
+                  </button>
+                </div>
               </div>
 
               {/* Current Selected */}
@@ -748,7 +794,16 @@ Generated with Travelism 2.0`;
                 {blob.returnFlight && <FlightCard flight={blob.returnFlight} kind="return" />}
               </div>
 
-              {/* All Alternative Outbound Flights */}
+              {/* GOOGLE-FLIGHTS-STYLE EXPLORER */}
+              {flightsView === "explore" && (
+                <div className="border-t border-line pt-6">
+                  <FlightsExplorer outbound={allOutbound} returnFlights={allReturn} />
+                </div>
+              )}
+
+              {/* All Alternative Outbound Flights (detailed) */}
+              {flightsView === "detailed" && (
+              <>
               <div className="border-t border-line pt-6">
                 <div className="flex items-center justify-between gap-2 mb-3">
                   <h3 className="display text-xl font-semibold text-ink">Outbound Flights ({allOutbound.length})</h3>
@@ -837,6 +892,8 @@ Generated with Travelism 2.0`;
                   })}
                 </div>
               </div>
+              </>
+              )}
             </div>
           )}
 

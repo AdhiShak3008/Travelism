@@ -62,6 +62,10 @@ export interface DestinationDataset {
   sources?: Record<string, Source>;
   /** true when produced by the live investigation pipeline. */
   live?: boolean;
+  /** Scout flagged the request as too vague — UI should ask the user to pick. */
+  needsClarification?: boolean;
+  /** Friendly reason + concrete suggestions shown when needsClarification. */
+  clarification?: { reason: string; suggestions: string[] };
 }
 
 // ---------------------------------------------------------------------------

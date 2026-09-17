@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import { useTrip } from "@/store/tripStore";
 import { useAuth } from "@/store/authStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
+import { useDiscoverFeed } from "@/lib/useDiscoverFeed";
 
 const CATEGORIES = [
   { label: "🏝️ Tropical Islands", query: "Bali and Gili Islands for a relaxing 8 days with beachfront villas, surfing, and sunset dining" },
@@ -40,14 +41,23 @@ function coverUrl(id: string): string {
 
 export function DreamStage() {
   const startDream = useTrip((s) => s.startDream);
+  const clarification = useTrip((s) => s.clarification);
+  const clearClarification = useTrip((s) => s.clearClarification);
   const openPreferences = useAuth((s) => s.openPreferences);
   const [text, setText] = useState("");
-  const [coverIdx, setCoverIdx] = useState(0);
 
+  // Live, infinite, non-hardcoded global showcase — real destinations + verified
+  // images fetched from the internet, auto-rotating.
+  const { current: liveCover, loading: coverLoading, next: nextCover } = useDiscoverFeed({ autoAdvanceMs: 7000 });
+  const [fallbackIdx, setFallbackIdx] = useState(0);
   useEffect(() => {
-    setCoverIdx(Math.floor(Math.random() * COVERS.length));
+    setFallbackIdx(Math.floor(Math.random() * COVERS.length));
   }, []);
-  const cover = COVERS[coverIdx];
+  const fb = COVERS[fallbackIdx];
+  // Prefer the live card; gracefully fall back to a static cover until it loads.
+  const cover = liveCover
+    ? { id: "", url: liveCover.image, tag: liveCover.tag, title: liveCover.name, location: liveCover.country, blurb: liveCover.blurb }
+    : { id: fb.id, url: coverUrl(fb.id), tag: fb.tag, title: fb.title, location: fb.location, blurb: "" };
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -127,6 +137,45 @@ export function DreamStage() {
               ))}
             </div>
 
+            {/* Scout clarification prompt — shown when the request was too vague */}
+            {clarification && (
+              <motion.div
+                initial={{ opacity: 0, y: -8, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: "auto" }}
+                className="mb-4 overflow-hidden rounded-2xl border border-terra/40 bg-terra/10 p-4"
+              >
+                <div className="flex items-start gap-2.5">
+                  <span className="text-lg">🧭</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold text-ink">Scout needs a place to aim for</div>
+                    <p className="mt-0.5 text-sm text-ink-soft">{clarification.reason}</p>
+                    {clarification.suggestions.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {clarification.suggestions.map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => {
+                              setText(s);
+                              startDream(s);
+                            }}
+                            className="rounded-full border border-brand/40 bg-brand/10 px-3.5 py-1.5 text-xs font-semibold text-brand transition hover:bg-brand/20 active:scale-95"
+                          >
+                            {s} →
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={clearClarification}
+                      className="mt-3 text-xs font-medium text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+                    >
+                      I&rsquo;ll type a place myself
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* Input Card */}
             <div className="card p-3.5 shadow-lift border-line-strong/60 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/20 transition-all w-full min-w-0">
               <textarea
@@ -197,16 +246,31 @@ export function DreamStage() {
             transition={{ duration: 0.8, delay: 0.15 }}
             className="relative w-full max-w-md"
           >
-            <div className="group relative overflow-hidden rounded-[32px] border border-line bg-card p-3 shadow-lift transition-all duration-500 hover:shadow-2xl">
-              <div className="relative aspect-[3/4] overflow-hidden rounded-[24px]">
-                <Image
-                  src={coverUrl(cover.id)}
-                  alt={cover.title}
-                  fill
-                  priority
-                  className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-                  unoptimized
-                />
+            <div
+              className="group relative cursor-pointer overflow-hidden rounded-[32px] border border-line bg-card p-3 shadow-lift transition-all duration-500 hover:shadow-2xl"
+              onClick={nextCover}
+              title="Discover another place"
+            >
+              <div className="relative aspect-[3/4] overflow-hidden rounded-[24px] bg-paper-2">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={cover.url}
+                    initial={{ opacity: 0, scale: 1.04 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.6 }}
+                    className="absolute inset-0"
+                  >
+                    <Image
+                      src={cover.url}
+                      alt={cover.title}
+                      fill
+                      priority
+                      className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                      unoptimized
+                    />
+                  </motion.div>
+                </AnimatePresence>
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
 
                 {/* Floating Top Tag */}
@@ -216,7 +280,11 @@ export function DreamStage() {
 
                 {/* Floating Live Verification Badge */}
                 <div className="absolute right-4 top-4 rounded-full bg-emerald-500/90 px-3 py-1 text-[11px] font-bold text-white backdrop-blur-md shadow-sm flex items-center gap-1">
-                  <span>✓</span> Real-Time Intel
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
+                  </span>
+                  {coverLoading ? "Scouting…" : "Live Discovery"}
                 </div>
 
                 {/* Bottom Caption Overlay */}

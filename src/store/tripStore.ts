@@ -41,6 +41,7 @@ import { runLiveInvestigation, runRefine, runRefineHotels, fetchCapabilities, fe
 import { registerSources } from "@/lib/research/sourceRegistry";
 import { routeInstruction } from "@/lib/concierge";
 import { createDefaultTravelerMemory, mergeTravelerMemory } from "@/lib/memory";
+import { useAuth } from "@/store/authStore";
 
 const now = () => new Date().toISOString();
 
@@ -65,6 +66,85 @@ const DEFAULT_PREFS: Preferences = {
   priorities: [],
   deprioritized: [],
 };
+
+// Map a saved Travel DNA vibe label → normalized agent priority tags + mood nudges.
+const VIBE_TO_PRIORITY: { test: RegExp; tags: string[]; mood?: Partial<Record<MoodKey, number>> }[] = [
+  { test: /mountain|peak|alpine|lake|fjord/i, tags: ["scenery", "mountains"], mood: { scenic: 2 } },
+  { test: /photo|golden hour|sunset|sunrise/i, tags: ["photography", "scenery"], mood: { photography: 2, scenic: 1 } },
+  { test: /beach|island|coast|ocean|sea/i, tags: ["beaches", "coastal"], mood: { scenic: 1 } },
+  { test: /histor|heritage|ancient|monument|temple|fort|palace|museum|culture/i, tags: ["heritage", "culture"], mood: { culture: 2 } },
+  { test: /food|cuisine|culinary|street food|gourmet|dining/i, tags: ["food"], mood: { food: 2 } },
+  { test: /adventure|trek|hike|climb|raft|dive|thrill/i, tags: ["adventure"], mood: { adventure: 2 } },
+  { test: /nightlife|bar|club|party/i, tags: ["nightlife"], mood: { nightlife: 2 } },
+  { test: /wellness|spa|yoga|relax|serene|quiet/i, tags: ["wellness", "comfort"], mood: { comfort: 1, rushing: -1 } },
+  { test: /nature|wildlife|forest|jungle|safari/i, tags: ["wildlife", "nature"], mood: { scenic: 1 } },
+];
+
+/**
+ * Build a Preferences/mood/memory seed from the traveler's saved Travel DNA
+ * profile. These act as DEFAULTS the specific dream can still override.
+ */
+function seedFromProfile(): {
+  prefs: Partial<Preferences>;
+  moodDelta: Partial<Record<MoodKey, number>>;
+  memoryDelta: { dietary?: string[]; vibes?: string[]; keyNotes?: string[]; accessibility?: string[] };
+  avoidEarly: boolean;
+  hasProfile: boolean;
+} {
+  const user = useAuth.getState().user;
+  const p = user?.preferences;
+  if (!p) {
+    return { prefs: {}, moodDelta: {}, memoryDelta: {}, avoidEarly: false, hasProfile: false };
+  }
+
+  const priorities = new Set<string>();
+  const moodDelta: Partial<Record<MoodKey, number>> = {};
+  for (const v of p.vibePriorities || []) {
+    for (const rule of VIBE_TO_PRIORITY) {
+      if (rule.test.test(v)) {
+        rule.tags.forEach((t) => priorities.add(t));
+        for (const [k, val] of Object.entries(rule.mood || {})) {
+          moodDelta[k as MoodKey] = (moodDelta[k as MoodKey] ?? 0) + (val as number);
+        }
+      }
+    }
+  }
+  // dietary vegetarian/vegan/etc → food-conscious priority
+  const veg = (p.dietary || []).some((d) => /veg|vegan|jain|halal|kosher|gluten|allerg/i.test(d));
+  if (veg) priorities.add("food");
+
+  const avoidEarly = (p.flightPreferences || []).some((f) => /early|red.?eye|morning/i.test(f));
+
+  const budgetTierMap: Record<string, Preferences["budgetTier"]> = {
+    economical: "economical",
+    balanced: "balanced",
+    premium: "premium",
+  };
+
+  return {
+    prefs: {
+      budgetTier: budgetTierMap[p.budgetTier] ?? "balanced",
+      pace: p.travelPace ?? "balanced",
+      avoidEarlyFlights: avoidEarly,
+      accessibilityNeeds: [...(p.accessibilityNeeds || [])],
+      priorities: Array.from(priorities),
+      stayMode: p.stayMode,
+    },
+    moodDelta,
+    memoryDelta: {
+      dietary: p.dietary || [],
+      vibes: p.vibePriorities || [],
+      accessibility: p.accessibilityNeeds || [],
+      keyNotes: [
+        `Travel DNA: ${p.budgetTier} budget, ${p.travelPace} pace, prefers ${p.stayMode}`,
+        ...(avoidEarly ? ["Dislikes early-morning flights"] : []),
+        ...((p.dietary || []).length ? [`Dietary: ${(p.dietary || []).join(", ")}`] : []),
+      ],
+    },
+    avoidEarly,
+    hasProfile: true,
+  };
+}
 
 import { getDefaultStartDate } from "@/lib/format";
 
@@ -111,11 +191,16 @@ interface TripStore {
   investigating: boolean;
   refining: boolean;
   lastMessage: string | null;
+  /** Scout flagged the dream as too vague — prompt shown on the landing. */
+  clarification: { reason: string; suggestions: string[] } | null;
+  /** Cache telemetry from the last investigation (served-from-cache badge). */
+  cacheInfo: import("@/lib/liveClient").CacheInfo | null;
 
   // flow
   setStage: (s: Stage) => void;
   goToStage: (s: Stage) => void;
   startDream: (dream: string) => Promise<void>;
+  clearClarification: () => void;
   refineInvestigation: (text: string) => Promise<void>;
   refineHotels: (text: string) => Promise<void>;
   liveMode: boolean | null;
@@ -187,6 +272,8 @@ export const useTrip = create<TripStore>((set, get) => ({
   investigating: false,
   refining: false,
   lastMessage: null,
+  cacheInfo: null,
+  clarification: null,
   liveMode: null,
   maxStageReached: "dream",
   chatLog: [
@@ -247,16 +334,35 @@ export const useTrip = create<TripStore>((set, get) => ({
     }
   },
 
+  clearClarification: () => set({ clarification: null }),
+
   startDream: async (dream) => {
+    set({ clarification: null });
+
+    // ---- TRAVEL DNA: seed defaults from the saved profile (dream overrides) ----
+    const profile = seedFromProfile();
+
     const signals = parseComment(dream, "trip");
     let mood = { ...DEFAULT_MOOD };
+    // profile mood first (base), then the dream's own cues on top
+    mood = applyMoodDelta(mood, profile.moodDelta);
     mood = applyMoodDelta(mood, moodDeltaFromComment(dream));
-    const prefs = derivePreferences(signals, { ...DEFAULT_PREFS });
+    // base prefs = defaults <- profile <- dream-derived signals (dream wins)
+    const basePrefs: Preferences = { ...DEFAULT_PREFS, ...profile.prefs } as Preferences;
+    const prefs = derivePreferences(signals, basePrefs);
+    // merge profile + dream priorities (union), keep profile accessibility
+    prefs.priorities = Array.from(new Set([...(profile.prefs.priorities || []), ...prefs.priorities]));
+    prefs.accessibilityNeeds = Array.from(
+      new Set([...(profile.prefs.accessibilityNeeds || []), ...prefs.accessibilityNeeds])
+    );
+    // avoid-early: honored if either the profile or the dream asks for it
+    if (profile.avoidEarly) prefs.avoidEarlyFlights = true;
 
     const extractedOriginCity = extractOrigin(dream) || "Hyderabad";
     const extractedDuration = extractDuration(dream) || 7;
     const extractedTrav = extractTravelers(dream) || prefs.travelers || 2;
 
+    const dreamMentionsStay = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent|no\s*hotel|without\s*hotel|campsite|refugio|mountain\s*hut|bothy|homestay|hotel|resort|hostel/i.test(dream);
     const isOutdoor = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent/i.test(dream);
     const initialStayMode: StayMode = isOutdoor
       ? "wild_camping"
@@ -266,13 +372,16 @@ export const useTrip = create<TripStore>((set, get) => ({
       ? "campsites_refugios"
       : /homestay/i.test(dream)
       ? "homestays"
-      : "hotels";
+      // no explicit stay cue in the dream → fall back to the profile's stayMode
+      : (!dreamMentionsStay && (profile.prefs.stayMode as StayMode)) || "hotels";
 
     const initialMemory = mergeTravelerMemory(createDefaultTravelerMemory(), {
       learnedFacts: [dream],
-      keyNotes: [`Dream: "${dream}"`],
+      keyNotes: [`Dream: "${dream}"`, ...(profile.memoryDelta.keyNotes || [])],
       companionship: extractedTrav > 1 ? [`Party of ${extractedTrav} travelers`] : ["Solo traveler"],
       style: isOutdoor ? ["Self-supported / Outdoor camping"] : undefined,
+      dietary: profile.memoryDelta.dietary,
+      vibes: profile.memoryDelta.vibes,
     });
 
     const baseBlob: TripBlob = {
@@ -326,7 +435,44 @@ export const useTrip = create<TripStore>((set, get) => ({
             ),
           }));
         };
-        const dataset = await runLiveInvestigation(dream, onProgress);
+        // Pass the traveler's Travel DNA into the server investigation so a
+        // fresh destination is researched through their lens (budget, vibes,
+        // dietary, flight prefs, accessibility) — not just the raw dream text.
+        const profileHints = profile.hasProfile
+          ? {
+              budgetTier: prefs.budgetTier,
+              pace: prefs.pace,
+              priorities: prefs.priorities,
+              accessibilityNeeds: prefs.accessibilityNeeds,
+              avoidEarlyFlights: prefs.avoidEarlyFlights,
+              dietary: profile.memoryDelta.dietary,
+              stayMode: initialStayMode,
+              currency: useAuth.getState().user?.preferences.currency,
+            }
+          : undefined;
+        const onCache = (info: import("@/lib/liveClient").CacheInfo) => {
+          set({ cacheInfo: info });
+          if (info.hit) {
+            const src = info.source === "l1" ? "memory" : info.source === "l2" ? "shared cache" : "cache";
+            set({ lastMessage: `Served instantly from ${src}${info.stale ? " (refreshing in background)" : ""}.` });
+          }
+        };
+        const dataset = await runLiveInvestigation(dream, onProgress, undefined, profileHints, onCache);
+
+        // Scout flagged the request as too vague — don't fabricate a trip.
+        // Return to the dream screen with a friendly clarification prompt.
+        if (dataset.needsClarification) {
+          set({
+            investigating: false,
+            stage: "dream",
+            clarification: dataset.clarification ?? {
+              reason: "Could you tell us a place? A city, country, or landmark works.",
+              suggestions: [],
+            },
+          });
+          return;
+        }
+
         registerSources(dataset.sources);
         const blob: TripBlob = {
           ...baseBlob,
@@ -339,6 +485,7 @@ export const useTrip = create<TripStore>((set, get) => ({
           blob,
           dataset,
           investigating: false,
+          clarification: null,
           stage: "reveal",
           maxStageReached: "reveal",
           agents: st.agents.map((a) => (a.phase === "queued" || a.phase === "working" ? { ...a, phase: "done", status: "Done" } : a)),
@@ -1275,6 +1422,7 @@ export const useTrip = create<TripStore>((set, get) => ({
       agents: AGENT_ORDER.map((id) => makeIdleActivity(id)),
       investigating: false,
       refining: false,
+      cacheInfo: null,
       lastMessage: null,
       travelerMemory: resetMem,
       chatLog: [

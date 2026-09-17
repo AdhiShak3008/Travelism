@@ -15,7 +15,7 @@ import type {
   TransportOption,
 } from "../types";
 import type { DestinationDataset } from "../research/provider";
-import { parseIntent, cleanDestinationName, type Intent } from "./intent";
+import { parseIntent, cleanDestinationName, cleanDreamInput, scoutInterpretationNote, type Intent } from "./intent";
 import { tavilySearch, tavilySearchImages } from "./tavily";
 import { freeWebSearch } from "./freeSearch";
 import { scrapeLiveSubjectImages } from "./imageScraper";
@@ -42,6 +42,8 @@ import { classifySource, recencyWeight, confidenceScore } from "./reliability";
 import { estimateRoute, buildRouteFlights } from "./flightEstimator";
 import { CAP } from "./env";
 import { getRegionalSpendingProfile, resolveCanonicalEntity, healCandidateImages } from "./middleman";
+import { resolveLivePlace } from "./geoResolver";
+import { lookupPlace, placesEnabled } from "./places";
 
 // ============================================================================
 // The orchestrator. dream → intent → discover (Tavily) → crawl real pages →
@@ -64,10 +66,22 @@ export function destinationKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+export interface ProfileHints {
+  budgetTier?: "economical" | "balanced" | "premium";
+  pace?: "comfortable" | "balanced" | "fast";
+  priorities?: string[];
+  accessibilityNeeds?: string[];
+  avoidEarlyFlights?: boolean;
+  dietary?: string[];
+  stayMode?: string;
+  currency?: string;
+}
+
 export async function investigate(
   dream: string,
   emit: Emit = noop,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  profileHints?: ProfileHints
 ): Promise<DestinationDataset> {
   emit({ agent: "concierge", phase: "working", status: "Reading your dream" });
   let intent: Intent;
@@ -75,38 +89,205 @@ export async function investigate(
     intent = await parseIntent(dream, signal);
   } catch (e) {
     console.error("[investigate] parseIntent failed, using fallback:", e instanceof Error ? e.message : e);
-    const guess = dream.match(/(?:to|in|visit|explore)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)/)?.[1]?.trim();
-    const destGuess = guess || dream.split(/\s+/).slice(0, 3).join(" ");
-    intent = {
-      destination: destGuess,
-      destinations: [destGuess],
-      durationDays: undefined,
-      travelers: undefined,
-      priorities: [],
-      deprioritized: [],
-      accessibilityNeeds: [],
-    };
+    // Peel conversational filler ("i wanna explore", "let's go to", etc.) so we
+    // don't mistake verbs for a place, then try to extract the actual location.
+    const cleaned = cleanDreamInput(dream);
+    // Prefer an explicit "…to/in/visit/explore <Place>" span (case-insensitive
+    // so lowercase inputs like "american appalachias" still resolve).
+    const spanMatch = cleaned.match(
+      /(?:^|\b)(?:to|in|of|visit|explore|see|around|across)\s+([a-z][\w'-]*(?:\s+(?:the|of|and)?\s*[a-z][\w'-]*){0,3})/i
+    );
+    // Otherwise take the cleaned phrase itself (the filler prefixes are gone).
+    let destGuess = (spanMatch?.[1] || cleaned).trim();
+    // Strip trailing constraint clauses ("for 5 days", "with my family", etc.).
+    destGuess = destGuess
+      .replace(/\b(?:for|with|during|in|on|over)\b.*$/i, "")
+      .replace(/[^a-zA-Z\s'-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Bail early if nothing resembling a place survived the filler stripping.
+    const guessBare = destGuess.replace(/\s+/g, "");
+    const looksLikePlace =
+      destGuess.length >= 3 &&
+      !/^(?:i|we|you|explore|visit|see|go|travel|trip|somewhere|anywhere|places?|around)$/i.test(guessBare);
+
+    // Resolve the guess LIVE against the internet (Wikipedia + OpenStreetMap) —
+    // confirms it's a real place, gets its canonical name, and for regions/
+    // mountain ranges discovers real hub cities. No hardcoded destination table.
+    const resolved = looksLikePlace ? await resolveLivePlace(destGuess, signal).catch(() => null) : null;
+
+    if (resolved?.found) {
+      const isRegionLike = ["region", "natural", "country"].includes(resolved.kind) && resolved.hubs.length > 0;
+      intent = {
+        destination: resolved.canonicalName,
+        destinations: isRegionLike ? resolved.hubs : [resolved.canonicalName],
+        destinationType: isRegionLike ? "region" : resolved.kind === "landmark" ? "landmark" : "city",
+        resolvedHub: isRegionLike ? resolved.hubs[0] : resolved.canonicalName,
+        region: undefined,
+        geoConfidence: 0.7,
+        isVague: false,
+        suggestedDestinations: [],
+        durationDays: undefined,
+        travelers: undefined,
+        priorities: [],
+        deprioritized: [],
+        accessibilityNeeds: [],
+      };
+    } else {
+      // Couldn't confirm a real place anywhere online → ask the user to clarify
+      // rather than inventing a destination out of filler words.
+      intent = {
+        destination: cleaned || dream,
+        destinations: [],
+        destinationType: "vague",
+        resolvedHub: "",
+        geoConfidence: 0.2,
+        isVague: true,
+        vagueReason: "I couldn't pin that to a real place — tell me a city, country, or region and I'll scout it.",
+        suggestedDestinations: [],
+        durationDays: undefined,
+        travelers: undefined,
+        priorities: [],
+        deprioritized: [],
+        accessibilityNeeds: [],
+      };
+    }
   }
+
+  // ---- TRAVEL DNA: fold the traveler's saved profile into the intent so the
+  // whole investigation (hotels via budget tier, food via dietary, flights via
+  // early-flight pref, itinerary via priorities/accessibility) is researched
+  // through their lens. The dream's explicit cues still take precedence.
+  if (profileHints) {
+    // budget/pace: only apply the profile default if the dream didn't set one
+    if (profileHints.budgetTier && !intent.budgetTier) intent.budgetTier = profileHints.budgetTier;
+    if (profileHints.pace && !intent.pace) intent.pace = profileHints.pace;
+    if (profileHints.avoidEarlyFlights) intent.avoidEarlyFlights = true;
+    // priorities & accessibility: union (profile broadens what agents weigh)
+    intent.priorities = Array.from(new Set([...(intent.priorities || []), ...(profileHints.priorities || [])]));
+    intent.accessibilityNeeds = Array.from(
+      new Set([...(intent.accessibilityNeeds || []), ...(profileHints.accessibilityNeeds || [])])
+    );
+    // dietary → priorities cue so Foodie respects it (also carried in memory)
+    if (profileHints.dietary?.some((d) => /veg|vegan|jain|halal|kosher|gluten|allerg/i.test(d))) {
+      if (!intent.priorities.includes("food")) intent.priorities.push("food");
+      intent.dietary = profileHints.dietary;
+    }
+  }
+
+  // ---- SCOUT: vagueness gate ----
+  // If the traveler only described a vibe (no real place), don't fabricate a
+  // destination — return a clarification payload the UI can prompt on.
+  if (intent.isVague) {
+    emit({ agent: "scout", phase: "done", status: "Your request is a vibe, not a place yet", metric: undefined });
+    emit({ agent: "concierge", phase: "done", status: intent.vagueReason ?? "Tell me where — or pick a suggestion." });
+    return buildClarificationDataset(intent);
+  }
+
+  // ---- LIVE VALIDATION GATE ----
+  // Groq occasionally returns a low-confidence or non-canonical destination
+  // (e.g. the raw lowercase/misspelled input echoed back). Before committing to
+  // an investigation, verify the place actually exists on the internet
+  // (Wikipedia + OpenStreetMap) and correct its canonical name / hub cities.
+  // If nothing real can be confirmed, ask the traveler to clarify rather than
+  // researching a place that may not exist. Fictional/pop-culture requests are
+  // exempt (their "destination" is a title mapped to real hubs already).
+  const looksNonCanonical =
+    !!intent.destination &&
+    intent.destination === intent.destination.toLowerCase() && // never capitalized
+    !/\d/.test(intent.destination);
+  const lowConfidence = (intent.geoConfidence ?? 0.8) < 0.55;
+  const isFictional = intent.destinationType === "fictional";
+  if (!isFictional && (lowConfidence || looksNonCanonical)) {
+    emit({ agent: "scout", phase: "working", status: "Verifying the destination is real" });
+    const verified = await resolveLivePlace(intent.destination, signal).catch(() => null);
+    if (verified?.found) {
+      const isRegionLike = ["region", "natural", "country"].includes(verified.kind) && verified.hubs.length > 0;
+      intent.destination = isRegionLike
+        ? `${verified.canonicalName} (${verified.hubs.slice(0, 4).join(", ")})`
+        : verified.canonicalName;
+      if (isRegionLike) {
+        intent.destinations = verified.hubs;
+        intent.destinationType = "region";
+        intent.resolvedHub = verified.hubs[0];
+      } else if (!intent.destinations || intent.destinations.length === 0) {
+        intent.destinations = [verified.canonicalName];
+        intent.resolvedHub = verified.canonicalName;
+      }
+      if (verified.summary && !intent.region) intent.region = verified.summary.slice(0, 80);
+    } else {
+      // Could not confirm the place anywhere online → clarify, don't fabricate.
+      emit({ agent: "scout", phase: "done", status: "Couldn't verify that as a real place" });
+      emit({
+        agent: "concierge",
+        phase: "done",
+        status: "I couldn't find that place — could you check the spelling or name a city, country, or region?",
+      });
+      return buildClarificationDataset({
+        ...intent,
+        isVague: true,
+        vagueReason: "I couldn't verify that as a real place — check the spelling or try a city, country, or region.",
+        suggestedDestinations: [],
+      });
+    }
+  }
+
+  // Scout tells the user how it interpreted a fictional/landmark/country request.
+  const scoutNote = scoutInterpretationNote(intent);
+  if (scoutNote) {
+    emit({ agent: "scout", phase: "done", status: scoutNote });
+  }
+
   const rawDest = cleanDestinationName(intent.destination);
 
+  // Does this request span multiple real hubs (multi-city / region / fictional)?
+  // If so, the display title is NOT a searchable place — real hubs live in
+  // intent.destinations and must never be polluted with the title.
+  const isMultiHub =
+    ["multi", "region", "fictional"].includes(intent.destinationType || "") ||
+    (intent.destinations && intent.destinations.length >= 2);
+
   // ---- MIDDLEMAN: entity disambiguation & geofencing ----
-  // Resolve vague/landmark requests to a canonical hub (Taj Mahal → Agra) and
-  // establish the geofence + known closures the rest of the pipeline honors.
+  // Resolve landmark/monument requests to a canonical hub (Taj Mahal → Agra).
+  // For single-hub trips this refines the search anchor; for multi-hub trips we
+  // keep the journey title for display but anchor searches on real hubs only.
   const canonical = resolveCanonicalEntity(rawDest, intent.region);
-  // Use the canonical hub as the working destination so searches (places,
-  // hotels, experiences, flights) all anchor to the real base city.
-  const dest = canonical.canonicalHub || rawDest;
-  intent.destination = dest;
-  intent.destinations = (intent.destinations && intent.destinations.length > 0 ? intent.destinations : [dest])
-    .map(cleanDestinationName)
-    .filter(Boolean);
-  // ensure the canonical hub is the primary geofence anchor
-  if (!intent.destinations.includes(dest)) intent.destinations.unshift(dest);
+
+  if (isMultiHub) {
+    // Clean, deduped real hubs; title stays as display name only.
+    const realHubs = uniqBy(
+      (intent.destinations && intent.destinations.length > 0 ? intent.destinations : [rawDest])
+        .map(cleanDestinationName)
+        .filter(Boolean),
+      (h) => h.toLowerCase().trim()
+    );
+    intent.destinations = realHubs;
+    // intent.destination keeps the journey title for display
+  } else {
+    // Single hub: anchor to the canonical/base city for searches.
+    const dest0 = canonical.canonicalHub || intent.resolvedHub || rawDest;
+    intent.destination = dest0;
+    intent.destinations = uniqBy(
+      (intent.destinations && intent.destinations.length > 0 ? intent.destinations : [dest0])
+        .map(cleanDestinationName)
+        .filter(Boolean),
+      (h) => h.toLowerCase().trim()
+    );
+    if (!intent.destinations.some((d) => d.toLowerCase() === dest0.toLowerCase())) {
+      intent.destinations.unshift(dest0);
+    }
+  }
+
+  // The working "dest" used for single-hub searches/labels. For multi-hub it's
+  // the real primary hub (not the title), so downstream single-hub helpers work.
+  const dest = isMultiHub ? intent.destinations[0] || rawDest : intent.destination;
+  const displayName = isMultiHub ? rawDest : dest;
   const geofence = { hub: dest, radiusKm: canonical.geofenceRadiusKm, region: canonical.parentStateOrCountry };
   emit({
     agent: "concierge",
     phase: "done",
-    status: canonical.name !== dest ? `Understood: ${canonical.name} → ${dest}` : `Understood: ${dest}`,
+    status: `Understood: ${displayName}`,
     metric: intent.priorities.join(", ") || undefined,
   });
 
@@ -146,23 +327,48 @@ export async function investigate(
   const crawlCache = new Map<string, CrawledPage>();
   async function discoverAndCrawl(query: string, n: number): Promise<CrawledPage[]> {
     try {
-      const results = await withTimeout(
-        tavilySearch(query, { maxResults: n, depth: "advanced", signal }),
-        10000,
-        []
-      );
-      const urls = results.map((r) => r.url);
+      // ---- DISCOVERY: free-first, Tavily as backup ----
+      // Zero-cost DuckDuckGo search first so the whole investigation keeps
+      // working when Tavily credits are exhausted. Only supplement with Tavily
+      // (if configured) when the free results come back thin.
+      const seeds: { url: string; title: string; text: string }[] = [];
+      const seen = new Set<string>();
 
-      // Seed crawlCache with Tavily content immediately so we always have rich text
-      for (const r of results) {
-        if (!crawlCache.has(r.url) && r.content) {
-          crawlCache.set(r.url, {
-            url: r.url,
-            canonicalUrl: r.url,
-            finalUrl: r.url,
-            title: r.title || r.url,
-            text: r.content,
-            wordCount: r.content.split(/\s+/).length,
+      const free = await withTimeout(freeWebSearch(query, n + 2, signal).catch(() => []), 8000, []);
+      for (const r of free) {
+        if (r.url && !seen.has(r.url)) {
+          seen.add(r.url);
+          seeds.push({ url: r.url, title: r.title, text: r.snippet || "" });
+        }
+      }
+
+      // Supplement with Tavily only if free discovery was thin AND a key exists.
+      if (seeds.length < Math.min(4, n) && CAP.search) {
+        const tav = await withTimeout(
+          tavilySearch(query, { maxResults: n, depth: "advanced", signal }).catch(() => []),
+          10000,
+          []
+        );
+        for (const r of tav) {
+          if (r.url && !seen.has(r.url)) {
+            seen.add(r.url);
+            seeds.push({ url: r.url, title: r.title, text: r.content || "" });
+          }
+        }
+      }
+
+      const urls = seeds.map((s) => s.url);
+
+      // Seed crawlCache with snippet/content immediately so we always have text.
+      for (const s of seeds) {
+        if (!crawlCache.has(s.url) && s.text) {
+          crawlCache.set(s.url, {
+            url: s.url,
+            canonicalUrl: s.url,
+            finalUrl: s.url,
+            title: s.title || s.url,
+            text: s.text,
+            wordCount: s.text.split(/\s+/).length,
             jsonLd: [],
             meta: {},
             images: [],
@@ -173,6 +379,7 @@ export async function investigate(
         }
       }
 
+      // Crawl pages we don't yet have rich text for (snippets are short).
       const fresh = urls.filter((u) => !crawlCache.has(u) || (crawlCache.get(u)?.wordCount ?? 0) < 100);
       const pages = await withTimeout(crawlMany(fresh, 4, signal), 8000, []);
       pages.forEach((p) => {
@@ -194,7 +401,13 @@ export async function investigate(
   const bathFocus = intent.priorities.some((p) => /bath|toilet|hygien|clean/i.test(p));
   const isOutdoorStay = intent.stayMode === "wild_camping" || intent.stayMode === "campsites_refugios" || intent.isSelfSupported;
   const stayLocus = staySearchLocus(dest, intent);
-  const destinations = intent.destinations && intent.destinations.length >= 2 ? intent.destinations : [dest];
+  // Dedupe hubs case-insensitively so a repeated hub can't double places/hotels
+  // (e.g. Middleman prepending the canonical "Agra" when it's already present).
+  const dedupedHubs = uniqBy(
+    (intent.destinations && intent.destinations.length > 0 ? intent.destinations : [dest]).filter(Boolean),
+    (h) => h.toLowerCase().trim()
+  );
+  const destinations = dedupedHubs.length >= 2 ? dedupedHubs : [dest];
   const isMultiDest = destinations.length >= 2;
 
   // ---- PHASE 1: Comprehensive Multi-Track Discovery ----
@@ -237,7 +450,7 @@ export async function investigate(
         const [pl, ht, fd, ex] = await Promise.all([
           withTimeout(extractPlaces(hub, gPages, signal).catch(() => []), 14000, []),
           withTimeout(extractHotels(hub, intent.priorities, sPages, signal).catch(() => []), 14000, []),
-          withTimeout(extractFood(hub, fPages, signal).catch(() => []), 10000, []),
+          withTimeout(extractFood(hub, fPages, signal, intent.dietary).catch(() => []), 10000, []),
           withTimeout(extractExperiences(hub, aPages, signal).catch(() => []), 10000, []),
         ]);
 
@@ -301,7 +514,7 @@ export async function investigate(
       withTimeout(extractOverview(dest, overviewPages, signal).catch(() => ({} as any)), 10000, {} as any),
       withTimeout(extractPlaces(dest, [...overviewPages, ...placePages], signal).catch(() => []), 10000, []),
       withTimeout(extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []), 10000, []),
-      withTimeout(extractFood(dest, foodPages, signal).catch(() => []), 10000, []),
+      withTimeout(extractFood(dest, foodPages, signal, intent.dietary).catch(() => []), 10000, []),
       withTimeout(extractPermits(dest, permitPages, signal).catch(() => []), 10000, []),
       withTimeout(extractExperiences(dest, experiencePages, signal).catch(() => []), 10000, []),
     ]);
@@ -339,12 +552,24 @@ export async function investigate(
   const hotelPagesFinal = hotelPages;
   const allPageSourceIds = uniq([...overviewPages, ...placePages].map((p) => sourceIdFor(p.finalUrl || p.url)));
 
+  // Dedupe places by normalized name across hubs (multi-dest/fictional fan-out
+  // can surface the same landmark from two hubs, e.g. "South Beach" twice).
+  extractedPlaces = uniqBy(extractedPlaces, (p) =>
+    p.name.toLowerCase().replace(/\s*[–—-]\s*.*/, "").replace(/[^a-z0-9]+/g, "").trim()
+  );
+
   // Fetch real verified subject-matched photos per place
   emit({ agent: "lens", phase: "working", status: "Gathering verified landmark photography" });
   const primaryHub = destinations[0] || dest;
-  const [rawWikiPlaceImages, heroImgs] = await Promise.all([
-    mapLimited(extractedPlaces, 4, (p) => withTimeout(scrapeLiveSubjectImages(p.name, p.location || dest, "attraction", 3, signal).catch(() => []), 6000, [])),
-    withTimeout(scrapeLiveSubjectImages(`${primaryHub} landscape scenery landmark`, primaryHub, "landscape", 2, signal).catch(() => []), 5000, []),
+  const [rawWikiPlaceImages, heroImgs, placeDetails] = await Promise.all([
+    mapLimited(extractedPlaces, 6, (p) => withTimeout(scrapeLiveSubjectImages(p.name, p.location || dest, "attraction", 3, signal).catch(() => []), 12000, [])),
+    withTimeout(scrapeLiveSubjectImages(`${primaryHub} landscape scenery landmark`, primaryHub, "landscape", 2, signal).catch(() => []), 8000, []),
+    // Google Places (New): real coordinates + rating for accurate map pins.
+    placesEnabled()
+      ? mapLimited(extractedPlaces, 6, (p) =>
+          withTimeout(lookupPlace(p.name, { locationBias: p.location || dest, maxPhotos: 3, signal }), 4000, null)
+        )
+      : Promise.resolve(extractedPlaces.map(() => null)),
   ]);
   const usedImageUrls = new Set<string>();
   const wikiPlaceImages = rawWikiPlaceImages.map((arr) => {
@@ -355,9 +580,25 @@ export async function investigate(
 
   const places: Place[] = await Promise.all(
     extractedPlaces.map(async (p, i) => {
+      // Only real subject-matched scraped images are candidates. If none, we do
+      // NOT inject a generic curated stand-in — the card shows a clean placeholder
+      // rather than a possibly-wrong photo of a named landmark.
+      const detail = placeDetails[i];
+      // Official Places photos are subject-locked → trustworthy; prepend them.
+      const placePhotos: MediaImage[] = (detail?.photoUrls ?? []).map((u) => ({
+        id: `img_place_${hash(u)}`,
+        url: u,
+        category: "attraction" as const,
+        credit: "Google Places",
+        provenance: "official" as const,
+      }));
       const wiki = (wikiPlaceImages[i] ?? []).slice(0, 4);
-      const rawCandidates = wiki.length > 0 ? wiki : [getCuratedPlaceImage(p.name, p.location || dest, p.category)];
-      const placeImages = await healCandidateImages(rawCandidates, p.name, p.location || dest, "attraction", signal);
+      const healedWiki = await healCandidateImages(wiki, p.name, p.location || dest, "attraction", signal);
+      // Dedup and keep official Places photos first.
+      const seenP = new Set<string>();
+      const placeImages = [...placePhotos, ...healedWiki]
+        .filter((im) => (seenP.has(im.url) ? false : (seenP.add(im.url), true)))
+        .slice(0, 5);
       return {
         id: `place_${i}_${destinationKey(p.name)}`,
         canonicalName: p.name,
@@ -380,11 +621,41 @@ export async function investigate(
         sourceIds: allPageSourceIds.slice(0, 3),
         confidence: 0.88,
         routeOrder: routeOrderFor(p.category ?? "core", i),
+        lat: detail?.lat,
+        lon: detail?.lon,
+        rating: detail?.rating,
+        reviewCount: detail?.reviewCount,
       };
     })
   );
 
-  const totalPhotos = wikiPlaceImages.reduce((s, arr) => s + arr.length, 0);
+  // ---- IMAGE BACKFILL ----
+  // Some places come back image-less not because no verified photo exists, but
+  // because their scrape got cut off under the concurrent first pass. Retry ONLY
+  // the empty ones, serially with a generous budget, so well-known landmarks
+  // (e.g. Colosseum) reliably get their subject-locked photo instead of a blank.
+  const missing = places.filter((p) => p.images.length === 0);
+  if (missing.length > 0) {
+    await mapLimited(missing, 3, async (p) => {
+      try {
+        const retry = await withTimeout(
+          scrapeLiveSubjectImages(p.canonicalName, p.location || dest, "attraction", 3, signal).catch(() => []),
+          10000,
+          []
+        );
+        const fresh = retry.filter((im) => !usedImageUrls.has(im.url));
+        const healed = await healCandidateImages(fresh, p.canonicalName, p.location || dest, "attraction", signal);
+        if (healed.length > 0) {
+          healed.forEach((im) => usedImageUrls.add(im.url));
+          p.images = healed.slice(0, 4);
+        }
+      } catch {
+        /* leave as clean placeholder */
+      }
+    });
+  }
+
+  const totalPhotos = places.reduce((s, p) => s + p.images.length, 0);
   emit({ agent: "lens", phase: "done", status: "Photos gathered & verified", metric: `${totalPhotos} photos` });
 
   // ---- REEL SCOUT: videos ----
@@ -414,7 +685,7 @@ export async function investigate(
 
   emit({ agent: "review_detective", phase: "working", status: `Analyzing reviews for ${combinedHotelCandidates.length} stays` });
   const reviews: Record<string, ReviewIntel> = {};
-  const [reviewIntels, rawHotelWebPhotos] = await Promise.all([
+  const [reviewIntels, rawHotelWebPhotos, hotelPlaces] = await Promise.all([
     mapLimited(combinedHotelCandidates, 4, async (h, i) => {
       if (i < 6) {
         try {
@@ -463,6 +734,13 @@ export async function investigate(
         return [];
       }
     }),
+    // Google Places (New) enrichment: real rating, review count, coordinates &
+    // official photos. No-op (nulls) when a Places-enabled key isn't set.
+    placesEnabled()
+      ? mapLimited(combinedHotelCandidates, 4, (h) =>
+          withTimeout(lookupPlace(h.name, { locationBias: h.location || dest, maxPhotos: 4, signal }), 4000, null)
+        )
+      : Promise.resolve(combinedHotelCandidates.map(() => null)),
   ]);
 
   const hotels: HotelOption[] = await Promise.all(
@@ -483,16 +761,27 @@ export async function investigate(
       provenance: "editorial" as const,
     }));
     
-    const combined = [...scrapedUrls.length > 0 ? webMedia : [], ...crawled];
+    // Google Places (New) enrichment for this hotel (null when disabled).
+    const place = hotelPlaces[i];
+    const placeMedia: MediaImage[] = (place?.photoUrls ?? []).map((u) => ({
+      id: `img_place_${hash(u)}`,
+      url: u,
+      category: "exterior" as const,
+      credit: "Google Places",
+      provenance: "official" as const,
+    }));
+
+    // Official Places photos are subject-locked → prepend them first.
+    const combined = [...placeMedia, ...(scrapedUrls.length > 0 ? webMedia : []), ...crawled];
     const seen = new Set<string>();
-    const imgs = combined.filter((im) => (seen.has(im.url) ? false : (seen.add(im.url), true))).slice(0, 5);
+    const imgs = combined.filter((im) => (seen.has(im.url) ? false : (seen.add(im.url), true))).slice(0, 6);
     const rawHotelImgs = imgs.length > 0 ? imgs : [img("hotelroom", "room", "official"), img("resort", "exterior", "official")];
     const finalImgs = await healCandidateImages(rawHotelImgs, h.name, h.location ?? dest, "room", signal);
 
     return {
       id: `hotel_${i}`,
-      name: h.name,
-      location: h.location ?? dest,
+      name: place?.name ?? h.name,
+      location: place?.address ?? h.location ?? dest,
       room: h.room ?? "Deluxe King Room",
       category: (h.pricePerNight && h.pricePerNight > 15000 ? "resort" : "hotel") as HotelOption["category"],
       pricePerNight: sanePrice(h.pricePerNight, dest, intent.budgetTier, i),
@@ -507,6 +796,10 @@ export async function investigate(
       sourceIds: hotelSourceIds,
       whyReasons: h.whyReasons?.length ? h.whyReasons : defaultWhy(intent, cleanliness, bathroomScore),
       confidence: 0.9,
+      lat: place?.lat,
+      lon: place?.lon,
+      rating: place?.rating,
+      reviewCount: place?.reviewCount,
     };
   }));
 
@@ -631,11 +924,17 @@ export async function investigate(
   const gateway = isMultiDest
     ? `${destinations[0]} → ${destinations[destinations.length - 1]}`
     : (overview.gateway ?? intent.region ?? dest);
-  const flights = buildFlightEstimates(intent, gateway);
+  // The flight endpoint must be a REAL city with an airport — never the journey
+  // title. Prefer the overview's gateway, then Scout's resolvedHub, then the
+  // first real destination, then the Middleman's canonical air gateway.
+  const realHub = intent.resolvedHub || destinations[0] || dest;
+  const flightGateway =
+    canonical.airGateway ?? (overview.gateway && !isMultiDest ? overview.gateway : realHub);
+  const flights = buildFlightEstimates(intent, flightGateway);
   emit({ agent: "wingman", phase: "done", status: "Flight options mapped", metric: `${flights.length} flights` });
 
   emit({ agent: "roadrunner", phase: "working", status: "Mapping ground transfers & transit connections" });
-  const transport = buildTransportEstimates(dest, gateway, intent.isSelfSupported, destinations);
+  const transport = buildTransportEstimates(dest, flightGateway, intent.isSelfSupported, destinations);
   emit({ agent: "roadrunner", phase: "done", status: "Ground transfers mapped", metric: `${transport.length} routes` });
 
   // ---- CROSS EXAMINER: conflicts ----
@@ -648,16 +947,21 @@ export async function investigate(
 
   const dataset: DestinationDataset = {
     meta: {
-      id: `dest_${destinationKey(dest)}`,
-      name: dest,
+      id: `dest_${destinationKey(displayName)}`,
+      name: displayName,
       destinations,
       tagline: overview.tagline ?? `Discover ${dest}.`,
       region: overview.region ?? intent.region ?? "",
       gateway,
       hero: (heroImgs[0] ?? wikiPlaceImages.flat()[0] ?? hotelImages[0])?.url ?? placeholderImage("landscape", primaryHub, primaryHub).url,
       bestSeason: overview.bestSeason ?? "Year-round",
-      // Middleman: surface known closures alongside facts so they're visible
-      facts: [...(overview.facts ?? []), ...(canonical.knownClosures ?? [])],
+      // Scout note (e.g. GTA 6 → Miami) + Middleman closures/gateway transfer
+      facts: [
+        ...(scoutNote ? [scoutNote] : []),
+        ...(overview.facts ?? []),
+        ...(canonical.airGateway && canonical.gatewayTransfer ? [`Getting there: ${canonical.gatewayTransfer}`] : []),
+        ...(canonical.knownClosures ?? []),
+      ],
       // Middleman disambiguation/geofence carried into the dataset
       canonicalOf: canonical.name !== dest ? canonical.name : undefined,
       knownClosures: canonical.knownClosures,
@@ -712,19 +1016,36 @@ export async function refinePlaces(
   emit({ agent: "scout", phase: "working", status: `Searching: ${request}` });
 
   const query = `${request} in ${destination}`.replace(/\s+/g, " ").trim();
-  let results = await tavilySearch(query, { maxResults: 7, depth: "advanced", signal }).catch(() => []);
-  if (results.length < 3) {
-    const fallbackResults = await tavilySearch(`${destination} ${request}`, { maxResults: 5, depth: "basic", signal }).catch(() => []);
-    results = [...results, ...fallbackResults];
+  // Free-first discovery: DuckDuckGo (zero cost), Tavily only as backup when
+  // thin and a key exists. Normalize to {url, title, text}.
+  const seed: { url: string; title: string; text: string }[] = [];
+  const seenUrls = new Set<string>();
+  const pushSeed = (url: string, title: string, text: string) => {
+    if (url && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      seed.push({ url, title, text });
+    }
+  };
+
+  const free = await freeWebSearch(query, 8, signal).catch(() => []);
+  free.forEach((r) => pushSeed(r.url, r.title, r.snippet || ""));
+
+  if (seed.length < 3 && CAP.search) {
+    const tav = await tavilySearch(query, { maxResults: 7, depth: "advanced", signal }).catch(() => []);
+    tav.forEach((r) => pushSeed(r.url, r.title, r.content || ""));
+    if (seed.length < 3) {
+      const tav2 = await tavilySearch(`${destination} ${request}`, { maxResults: 5, depth: "basic", signal }).catch(() => []);
+      tav2.forEach((r) => pushSeed(r.url, r.title, r.content || ""));
+    }
   }
 
-  const pages = await crawlMany(results.map((r) => r.url), 4, signal);
+  const pages = await crawlMany(seed.map((r) => r.url), 4, signal);
   for (const p of pages) {
     sourceIdFor(p.finalUrl || p.url);
     if ((!p.text || p.wordCount < 40) && !p.ok) {
-      const tav = results.find((r) => r.url === p.url);
-      if (tav?.content) {
-        p.text = tav.content.slice(0, 4000);
+      const s = seed.find((r) => r.url === p.url);
+      if (s?.text) {
+        p.text = s.text.slice(0, 4000);
         p.wordCount = p.text.split(/\s+/).length;
         p.ok = true;
       }
@@ -749,10 +1070,12 @@ export async function refinePlaces(
 
   const pageSourceIds = uniq(pages.map((p) => sourceIdFor(p.finalUrl || p.url))).slice(0, 3);
 
-  const places: Place[] = extracted.map((p, i) => {
+  const places: Place[] = await Promise.all(extracted.map(async (p, i) => {
+    // Subject-locked scraped images only; heal drops anything untrusted and
+    // returns [] for a named landmark with no verified photo (clean placeholder).
     const scraped = (liveImgs[i] ?? []).filter((im) => !usedUrls.has(im.url));
     scraped.forEach((im) => usedUrls.add(im.url));
-    const imgs = [...scraped, ...crawlImgs.slice(i, i + 1)].slice(0, 4);
+    const imgs = await healCandidateImages(scraped.slice(0, 4), p.name, p.location || destination, "attraction", signal);
     return {
       id: `place_refine_${Date.now()}_${i}_${destinationKey(p.name)}`,
       canonicalName: p.name,
@@ -760,7 +1083,7 @@ export async function refinePlaces(
       category: p.category ?? "core",
       blurb: p.blurb,
       description: p.description ?? p.blurb,
-      images: imgs.length ? imgs : [getCuratedPlaceImage(p.name, destination, p.category)],
+      images: imgs,
       videoIds: [],
       durationHours: p.durationHours ?? 2,
       distanceKm: p.distanceKm,
@@ -775,7 +1098,7 @@ export async function refinePlaces(
       confidence: 0.72,
       routeOrder: routeOrderFor(p.category ?? "core", 50 + i),
     };
-  });
+  }));
 
   emit({ agent: "scout", phase: "done", status: `Found ${places.length} new places`, metric: `${places.length}` });
   return { places, sources, query, found: places.length };
@@ -1350,6 +1673,56 @@ function buildTransportEstimates(
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
+}
+
+/** Dedupe by a derived key, preserving first-seen order. */
+function uniqBy<T>(arr: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of arr) {
+    const k = key(item);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * Minimal dataset returned when Scout flags the request as too vague. Carries
+ * no fabricated places — just the friendly reason + concrete suggestions the UI
+ * prompts the traveler to choose from.
+ */
+function buildClarificationDataset(intent: Intent): DestinationDataset {
+  return {
+    meta: {
+      id: "clarify",
+      name: intent.destination || "Where to?",
+      tagline: intent.vagueReason ?? "Tell us a place, or pick one of these to start.",
+      region: intent.region ?? "",
+      gateway: "",
+      hero: "",
+      bestSeason: "",
+      facts: [],
+    },
+    places: [],
+    videos: [],
+    reviews: {},
+    hotels: [],
+    flights: [],
+    transport: [],
+    permits: [],
+    food: [],
+    experiences: [],
+    evidence: [],
+    conflicts: [],
+    live: true,
+    needsClarification: true,
+    clarification: {
+      reason: intent.vagueReason ?? "You described the kind of trip, not a place — pick one to begin.",
+      suggestions: intent.suggestedDestinations ?? [],
+    },
+  };
 }
 
 async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {

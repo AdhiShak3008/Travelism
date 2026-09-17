@@ -266,12 +266,18 @@ export type ExtractedFood = z.infer<typeof FoodSchema>["food"][number];
 export async function extractFood(
   destination: string,
   pages: CrawledPage[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  dietary?: string[]
 ): Promise<ExtractedFood[]> {
   const corpus = pageCorpus(pages, 6);
+  // Bias picks toward the traveler's dietary needs when a profile provides them.
+  const dietaryLine =
+    dietary && dietary.length
+      ? `\nIMPORTANT — the traveler has these dietary needs: ${dietary.join(", ")}. Strongly prefer places that clearly cater to these (e.g. dedicated vegetarian/vegan/Jain/halal/gluten-free menus), and mention how each pick accommodates them in "whyRecommended".`
+      : "";
   const prompt = corpus
-    ? `DESTINATION: ${destination}\nExtract ACTUAL restaurants/cafes/eateries (named establishments, not article titles) in ${destination} from the pages. Aim for 3-6. Return JSON { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }.\n\nPAGES:\n${corpus}`
-    : `DESTINATION: ${destination}\nList 3-5 real, highly-rated restaurants/cafes/eateries and regional specialties in ${destination}.\nReturn JSON: { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }`;
+    ? `DESTINATION: ${destination}\nExtract ACTUAL restaurants/cafes/eateries (named establishments, not article titles) in ${destination} from the pages. Aim for 3-6. Return JSON { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }.${dietaryLine}\n\nPAGES:\n${corpus}`
+    : `DESTINATION: ${destination}\nList 3-5 real, highly-rated restaurants/cafes/eateries and regional specialties in ${destination}.${dietaryLine}\nReturn JSON: { "food": [ {name, cuisine, priceRange (₹/₹₹/₹₹₹), location, whyRecommended} ] }`;
 
   const res = await chatJSON(
     [

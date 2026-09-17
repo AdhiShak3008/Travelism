@@ -197,6 +197,11 @@ export interface Place {
   location?: string;
   /** lat/lng-ish ordering hint for the itinerary engine (route position) */
   routeOrder: number;
+  /** Real coordinates + rating from Google Places (New), when available. */
+  lat?: number;
+  lon?: number;
+  rating?: number; // 0-5
+  reviewCount?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +266,11 @@ export interface HotelOption {
   sourceIds: string[];
   whyReasons: string[];
   confidence: number;
+  /** Real coordinates + rating from Google Places (New), when available. */
+  lat?: number;
+  lon?: number;
+  rating?: number; // 0-5
+  reviewCount?: number;
 }
 
 export interface TransportOption {

@@ -41,6 +41,8 @@ function coverUrl(id: string): string {
 
 export function MobileDreamStage() {
   const startDream = useTrip((s) => s.startDream);
+  const clarification = useTrip((s) => s.clarification);
+  const clearClarification = useTrip((s) => s.clearClarification);
   const openPreferences = useAuth((s) => s.openPreferences);
   const [text, setText] = useState("");
   const [coverIdx, setCoverIdx] = useState(0);
@@ -121,6 +123,45 @@ export function MobileDreamStage() {
           ))}
         </div>
       </div>
+
+      {/* Scout clarification prompt — shown when the request was too vague */}
+      {clarification && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-4 rounded-2xl border border-terra/40 bg-terra/10 p-3.5"
+        >
+          <div className="flex items-start gap-2">
+            <span>🧭</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold text-ink">Scout needs a place to aim for</div>
+              <p className="mt-0.5 text-xs text-ink-soft">{clarification.reason}</p>
+              {clarification.suggestions.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {clarification.suggestions.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setText(s);
+                        startDream(s);
+                      }}
+                      className="rounded-full border border-brand/40 bg-brand/10 px-3 py-1 text-[11px] font-semibold text-brand active:scale-95 transition"
+                    >
+                      {s} →
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={clearClarification}
+                className="mt-2.5 text-[11px] font-medium text-ink-faint underline-offset-2 active:text-ink"
+              >
+                I&rsquo;ll type a place myself
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Prompt Console Box */}
       <motion.div

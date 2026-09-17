@@ -8,14 +8,7 @@ import { useAuth } from "@/store/authStore";
 import { useTrip } from "@/store/tripStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { cx } from "@/lib/format";
-import { WORLD_SPOTS_CATALOG, type DiscoveredSpot } from "@/lib/globalSpots";
-
-export const INITIAL_GLOBAL_SPOTS: DiscoveredSpot[] = [
-  WORLD_SPOTS_CATALOG[0], // Bali & Nusa Penida
-  WORLD_SPOTS_CATALOG[1], // Kyoto & Arashiyama
-  WORLD_SPOTS_CATALOG[11], // Swiss Alps
-  WORLD_SPOTS_CATALOG[12], // Amalfi Coast
-];
+import { type DiscoveredSpot } from "@/lib/globalSpots";
 
 const CATEGORIES = [
   { id: "all", label: "✨ All World Wonders" },
@@ -74,15 +67,16 @@ const TOURIST_PERKS = [
 
 export function AuthPage({ standalone = false, isRootLanding = false }: { standalone?: boolean; isRootLanding?: boolean }) {
   const router = useRouter();
-  const { isAuthModalOpen, closeAuthModal, login, loginAsDemo, logoutReason } = useAuth();
+  const { isAuthModalOpen, closeAuthModal, openAuthModal, login, loginAsDemo, logoutReason } = useAuth();
   const startDream = useTrip((s) => s.startDream);
 
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [queryReason, setQueryReason] = useState<string | null>(null);
 
-  // Dynamic Infinite Spots & Screensaver State
-  const [spots, setSpots] = useState<DiscoveredSpot[]>(INITIAL_GLOBAL_SPOTS);
+  // Dynamic Infinite Spots & Screensaver State — starts empty and is filled
+  // entirely by LIVE scouting (no hardcoded initial spots).
+  const [spots, setSpots] = useState<DiscoveredSpot[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [autoPlay, setAutoPlay] = useState(true);
 
@@ -90,6 +84,12 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
   const [isScouting, setIsScouting] = useState(false);
   const [scoutedNextSpot, setScoutedNextSpot] = useState<DiscoveredSpot | null>(null);
   const [scoutingRadarText, setScoutingRadarText] = useState("📡 World Radar: Active");
+
+  // A spot the user tapped "Plan trip" on while signed out — we hold it, prompt
+  // for login, and only start the swarm once they've actually authenticated.
+  const [pendingSpot, setPendingSpot] = useState<DiscoveredSpot | null>(null);
+  // Gallery scroller index for the focused spot's images.
+  const [galleryIdx, setGalleryIdx] = useState(0);
 
   // Form State
   const [email, setEmail] = useState("");
@@ -110,8 +110,16 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
 
   const activeReason = queryReason || logoutReason;
 
-  // Active current spot
-  const currentSpot = spots[currentIndex] || spots[0] || INITIAL_GLOBAL_SPOTS[0];
+  // Active current spot — null until the first live spot has been scouted.
+  const currentSpot: DiscoveredSpot | null = spots[currentIndex] || spots[0] || null;
+  // Verified image gallery for the focused spot (falls back to the single hero).
+  const gallery: string[] =
+    currentSpot?.images && currentSpot.images.length > 0
+      ? currentSpot.images
+      : currentSpot?.imageUrl
+      ? [currentSpot.imageUrl]
+      : [];
+  const heroImage = gallery[galleryIdx] ?? currentSpot?.imageUrl;
 
   // Scout next spot asynchronously from API and preload image
   const scoutNextGlobalSpot = useCallback(async (cat: string, existingList: DiscoveredSpot[]) => {
@@ -147,13 +155,28 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
     scoutNextGlobalSpot(selectedCategory, spots);
   }, [selectedCategory, scoutNextGlobalSpot]);
 
+  // First-load: as soon as the very first spot is scouted, seed it immediately
+  // so the passport shows a live card without waiting for the auto-advance timer.
+  useEffect(() => {
+    if (spots.length === 0 && scoutedNextSpot) {
+      setSpots([scoutedNextSpot]);
+      setCurrentIndex(0);
+      setScoutedNextSpot(null);
+    }
+  }, [spots.length, scoutedNextSpot]);
+
+  // Reset the gallery scroller to the first image whenever the focused spot changes.
+  useEffect(() => {
+    setGalleryIdx(0);
+  }, [currentSpot?.id]);
+
   // While current spot is displayed, auto scout the next one, then advance when timer fires
   useEffect(() => {
     if (!scoutedNextSpot && !isScouting) {
       scoutNextGlobalSpot(selectedCategory, spots);
     }
 
-    if (!autoPlay) return;
+    if (!autoPlay || spots.length === 0) return;
 
     const timer = setTimeout(() => {
       if (scoutedNextSpot) {
@@ -165,7 +188,7 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
         });
         setCurrentIndex((prev) => prev + 1);
         setScoutedNextSpot(null);
-      } else {
+      } else if (spots.length > 0) {
         setCurrentIndex((prev) => (prev + 1) % spots.length);
       }
     }, 6000);
@@ -222,11 +245,23 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
     }
   };
 
-  const handleDemo = () => {
-    loginAsDemo();
+  // After a successful login, either kick off the swarm for a spot the user
+  // was trying to plan, or just enter the app.
+  const afterAuth = () => {
+    closeAuthModal();
+    if (pendingSpot) {
+      const spot = pendingSpot;
+      setPendingSpot(null);
+      startDream(`${spot.name} for 7 days — exploring highlights, scenic spots, verified stays, and food.`);
+    }
     if (standalone && !isRootLanding) {
       router.push("/");
     }
+  };
+
+  const handleDemo = () => {
+    loginAsDemo();
+    afterAuth();
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -236,20 +271,27 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
     setTimeout(() => {
       login(email, tab === "signup" ? (name || "Traveler") : undefined);
       setLoading(false);
-      if (standalone && !isRootLanding) {
-        router.push("/");
-      }
+      afterAuth();
     }, 500);
   };
 
+  // "Plan trip" from a passport spot: if already signed in, start immediately;
+  // otherwise remember the spot and prompt the user to sign in first (no more
+  // silent auto-login).
   const handleExploreSpot = (spot: DiscoveredSpot) => {
-    if (!useAuth.getState().isAuthenticated) {
-      loginAsDemo();
+    if (useAuth.getState().isAuthenticated) {
+      closeAuthModal();
+      startDream(`${spot.name} for 7 days — exploring highlights, scenic spots, verified stays, and food.`);
+      if (standalone && !isRootLanding) router.push("/");
+      return;
     }
-    closeAuthModal();
-    startDream(`${spot.name} for 7 days — exploring highlights, scenic spots, verified stays, and food.`);
-    if (standalone && !isRootLanding) {
-      router.push("/");
+    // Not signed in → hold the spot, focus the sign-in form.
+    setPendingSpot(spot);
+    setTab("signin");
+    if (!standalone) openAuthModal();
+    if (typeof window !== "undefined") {
+      // bring the auth form into view on the landing page
+      requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
     }
   };
 
@@ -280,7 +322,7 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
                 T
               </div>
               <span className="display text-base sm:text-lg font-bold tracking-tight text-ink truncate">
-                Travelism Global Passport
+                Travelism
               </span>
             </div>
 
@@ -324,20 +366,37 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
               </div>
 
               {/* Main Panoramic Destination Card (Uniform Aspect Ratio) */}
+              {!currentSpot ? (
+                /* First-load live scouting state — no hardcoded spot shown */
+                <div className="relative overflow-hidden rounded-3xl border border-line shadow-2xl bg-zinc-950 min-h-[440px] sm:min-h-[480px] lg:min-h-[500px] flex flex-col items-center justify-center gap-4 p-5 sm:p-7 text-white">
+                  <div className="relative flex h-16 w-16 items-center justify-center">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400/40" />
+                    <span className="relative grid h-16 w-16 place-items-center rounded-full bg-teal-500/20 border border-teal-400/40 text-2xl">🌍</span>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-serif text-xl sm:text-2xl font-bold tracking-tight">Scouting the globe…</div>
+                    <p className="text-white/70 text-xs sm:text-sm mt-1">Pulling a live destination with a verified photo</p>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-bold text-emerald-300">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    <span className="truncate max-w-[200px]">{scoutingRadarText}</span>
+                  </div>
+                </div>
+              ) : (
               <div className="relative overflow-hidden rounded-3xl border border-line shadow-2xl bg-zinc-950 min-h-[440px] sm:min-h-[480px] lg:min-h-[500px] flex flex-col justify-between p-5 sm:p-7 text-white">
                 
                 {/* Background Image with Cross-Fade & Ambient Scale */}
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={currentSpot.id}
+                    key={heroImage ?? currentSpot.id}
                     initial={{ opacity: 0, scale: 1.04 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.98 }}
-                    transition={{ duration: 0.7, ease: "easeOut" }}
+                    transition={{ duration: 0.6, ease: "easeOut" }}
                     className="absolute inset-0"
                   >
                     <Image
-                      src={currentSpot.imageUrl}
+                      src={heroImage ?? currentSpot.imageUrl}
                       alt={currentSpot.name}
                       fill
                       priority
@@ -392,6 +451,27 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
                     <p className="italic font-light leading-relaxed line-clamp-3">{currentSpot.quote}</p>
                     <div className="text-[11px] text-teal-400 font-semibold mt-1.5 truncate">— {currentSpot.author}</div>
                   </div>
+
+                  {/* Verified Photo Gallery Scroller (below the images) */}
+                  {gallery.length > 1 && (
+                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                      {gallery.map((url, idx) => (
+                        <button
+                          key={url}
+                          onClick={() => setGalleryIdx(idx)}
+                          className={cx(
+                            "relative h-12 w-16 sm:h-14 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all active:scale-95",
+                            idx === galleryIdx
+                              ? "border-teal-400 ring-2 ring-teal-400/40 scale-105"
+                              : "border-white/25 opacity-70 hover:opacity-100"
+                          )}
+                          aria-label={`View photo ${idx + 1}`}
+                        >
+                          <Image src={url} alt="" fill sizes="80px" className="object-cover" unoptimized />
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Bottom Indicator & Controls Bar */}
                   <div className="flex items-center justify-between pt-1 gap-2">
@@ -461,6 +541,7 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Infinite World Stream Thumbnails */}
               <div>
@@ -564,6 +645,12 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
                 <p className="text-xs sm:text-sm text-ink-soft mt-1 leading-relaxed">
                   Sign in or create your free voyager profile to save custom itineraries, synchronize Travel DNA, and unlock VIP hotel benefits.
                 </p>
+                {pendingSpot && (
+                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-brand/40 bg-brand/10 px-3 py-2 text-xs font-semibold text-brand">
+                    <span>✨</span>
+                    <span>Sign in to start planning your trip to <strong>{pendingSpot.name}</strong> — the agents will begin scouting right after.</span>
+                  </div>
+                )}
               </div>
 
               {/* ⚡ INSTANT 1-CLICK VIP DEMO TOURIST PASS */}

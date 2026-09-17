@@ -22,6 +22,8 @@ export const ENV = {
   GOOGLE_SEARCH_CX: get("GOOGLE_SEARCH_CX") ?? get("GOOGLE_CX"),
   AMADEUS_CLIENT_ID: get("AMADEUS_CLIENT_ID"),
   AMADEUS_CLIENT_SECRET: get("AMADEUS_CLIENT_SECRET"),
+  UPSTASH_REDIS_REST_URL: get("UPSTASH_REDIS_REST_URL"),
+  UPSTASH_REDIS_REST_TOKEN: get("UPSTASH_REDIS_REST_TOKEN"),
 } as const;
 
 export const CAP = {
@@ -39,6 +41,8 @@ export const CAP = {
   googleImages: !!ENV.GOOGLE_SEARCH_API_KEY && !!ENV.GOOGLE_SEARCH_CX,
   /** real flight offers */
   flights: !!ENV.AMADEUS_CLIENT_ID && !!ENV.AMADEUS_CLIENT_SECRET,
+  /** distributed L2 cache (Upstash Redis over REST) */
+  redis: !!ENV.UPSTASH_REDIS_REST_URL && !!ENV.UPSTASH_REDIS_REST_TOKEN,
 } as const;
 
 /** Live investigation possible when we can reason (Groq LLM). Search engines enrich when present. */

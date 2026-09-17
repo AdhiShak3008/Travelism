@@ -14,6 +14,7 @@ interface MapPinItem {
   blurb?: string;
   imageUrl?: string;
   duration?: string;
+  coord?: { lat: number; lon: number };
 }
 
 function cleanStopQuery(label: string, destination: string): string {
@@ -76,6 +77,7 @@ export function InteractiveMapView({
         blurb: p.blurb,
         imageUrl: p.images[0]?.url,
         duration: `${p.durationHours}h visit`,
+        coord: p.lat != null && p.lon != null ? { lat: p.lat, lon: p.lon } : undefined,
       });
     });
 
@@ -88,13 +90,19 @@ export function InteractiveMapView({
         blurb: h.room,
         imageUrl: h.images[0]?.url,
         duration: "Hotel / Stay",
+        coord: h.lat != null && h.lon != null ? { lat: h.lat, lon: h.lon } : undefined,
       });
     });
   }
 
   const activePin = pins.find((p) => p.id === selectedPinId) || pins[0];
   const querySubject = activePin ? activePin.location : `${destinationName} attractions and hotels`;
-  const googleMapsEmbedUrl = `https://www.google.com/maps?q=${encodeURIComponent(querySubject)}&output=embed`;
+  // Prefer exact coordinates (from Google Places) when the active pin has them —
+  // pins land on the real building instead of a text-search centroid.
+  const activeCoord = activePin?.coord;
+  const googleMapsEmbedUrl = activeCoord
+    ? `https://www.google.com/maps?q=${activeCoord.lat},${activeCoord.lon}&z=15&output=embed`
+    : `https://www.google.com/maps?q=${encodeURIComponent(querySubject)}&output=embed`;
   const googleMapsDirectUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(querySubject)}`;
 
   const handleSelectPin = (id: string) => {
@@ -148,7 +156,7 @@ export function InteractiveMapView({
         {/* Map Frame Container */}
         <div className="relative h-[320px] sm:h-[400px] lg:h-[480px] w-full min-w-0 bg-paper-3 overflow-hidden">
           <iframe
-            key={querySubject}
+            key={googleMapsEmbedUrl}
             title={`Interactive Map of ${activePin?.name || destinationName}`}
             src={googleMapsEmbedUrl}
             className="h-full w-full border-0 grayscale-[0.15] contrast-[1.05] transition-opacity duration-300"

@@ -63,6 +63,15 @@ function cleanQueryTerms(raw: string): string[] {
   if (insideParens && insideParens.length > 3 && insideParens.toLowerCase() !== clean.toLowerCase()) {
     queries.push(insideParens);
   }
+  // Compound names like "Vatican Museums & Sistine Chapel" or "St Peter's
+  // Basilica and Square" are NOT single Wikipedia titles — split on & / and / ,
+  // and also try each part so at least one resolves to a real article image.
+  if (/\s(?:&|and|,|\/)\s/i.test(clean)) {
+    for (const part of clean.split(/\s*(?:&|\band\b|,|\/)\s*/i)) {
+      const p = part.trim();
+      if (p.length > 3) queries.push(p);
+    }
+  }
   return Array.from(new Set(queries.filter(Boolean)));
 }
 
@@ -135,7 +144,34 @@ function isPersonArticle(title: string, desc?: string): boolean {
  */
 async function scrapeWikipediaPageImage(query: string, signal?: AbortSignal): Promise<string | null> {
   const candidates = cleanQueryTerms(query);
-  
+
+  // Stage 0: Fast REST summary lead image — a single call per candidate that
+  // returns the article's lead photo for an exact/redirected title. This is the
+  // fastest, most reliable path for well-known named places and avoids the
+  // heavier multi-stage lookups timing out under concurrency.
+  for (const q of candidates) {
+    try {
+      const res = await fetch(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(q)}`,
+        { headers: { "User-Agent": UA }, signal }
+      );
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        type?: string;
+        title?: string;
+        description?: string;
+        originalimage?: { source?: string };
+        thumbnail?: { source?: string };
+      };
+      if (data.type === "disambiguation") continue;
+      if (isPersonArticle(data.title || "", data.description)) continue;
+      const url = data.originalimage?.source ?? data.thumbnail?.source ?? null;
+      if (url && !isBadImage(url)) return url;
+    } catch {
+      // continue to heavier stages
+    }
+  }
+
   // Stage 1: Exact Title Lookup with Redirects
   for (const q of candidates) {
     const u = new URL("https://en.wikipedia.org/w/api.php");
@@ -346,6 +382,19 @@ export async function scrapeLiveSubjectImages(
   const strippedSubject = stripActivityNoise(cleanSubject);
   const destClean = destination.trim();
 
+  // ANTI-HALLUCINATION TRUST POLICY:
+  // - Named places/landmarks/attractions demand a SUBJECT-LOCKED photo (Wikipedia
+  //   article image / Google Places official). Fuzzy web-search images (DuckDuckGo,
+  //   Tavily) are NOT trustworthy for a named landmark — a search for
+  //   "Vizcaya Museum" can return an unrelated event photo. For these we return
+  //   ONLY trusted images, and if none exist we return [] (UI shows a clean
+  //   placeholder — never a wrong photo).
+  // - Hotels & experiences/tours are generic enough that a representative web photo
+  //   is acceptable, so fuzzy sources are allowed for them.
+  const isExperienceOrTour = /\b(tour|cruise|walk|walking|excursion|experience|class|tasting|safari|crawl|ticket|tickets|pass|adventure|hike|rental)\b/i.test(subject);
+  const isHotelOrStay = category === "room" || /\b(hotel|resort|inn|lodge|palace|villas|suites|hostel|stay|bivvy|camp)\b/i.test(subject);
+  const requiresSubjectLock = !isHotelOrStay && !isExperienceOrTour;
+
   // Extract individual hubs if multi-destination query is passed
   const hubs = destClean
     .split(/\s*(?:,|&|\band\b|\bto\b|\+|\/)\s*/i)
@@ -381,66 +430,64 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
-  const isExperienceOrTour = /\b(tour|cruise|walk|walking|excursion|experience|class|tasting|safari|crawl|ticket|tickets|pass|adventure|hike|rental)\b/i.test(subject);
-  const isHotelOrStay = category === "room" || /\b(hotel|resort|inn|lodge|palace|villas|suites|hostel|stay|bivvy|camp)\b/i.test(subject);
-
-  // 0. Google Custom Search & Google Places API (when configured)
+  // ---- TIER 1: SUBJECT-LOCKED SOURCES (always trusted) ----
+  // Google Places official photos (tied to the exact place) + Wikipedia article
+  // image (subject-locked via exact-title lookup). These cannot be an unrelated
+  // photo of the same place, so they're safe for named landmarks.
   try {
-    const [googleSearchUrls, googlePlaceUrls] = await Promise.all([
-      CAP.googleImages
-        ? Promise.all(searchTerms.slice(0, 2).map((term) => scrapeGoogleCustomSearchImages(term, limit, signal).catch(() => [])))
-        : Promise.resolve([]),
-      Promise.all(searchTerms.slice(0, 2).map((term) => scrapeGooglePlacesPhotos(term, limit, signal).catch(() => []))),
-    ]);
-    googleSearchUrls.flat().forEach((u) => addUrls([u], "Google Images"));
+    const googlePlaceUrls = await Promise.all(
+      searchTerms.slice(0, 2).map((term) => scrapeGooglePlacesPhotos(term, limit, signal).catch(() => []))
+    );
     googlePlaceUrls.flat().forEach((u) => addUrls([u], "Google Places"));
   } catch {
     // continue
   }
-
-  // If this is a hotel/stay or tour/activity, query DuckDuckGo & Tavily FIRST to get real photos
-  if ((isHotelOrStay || isExperienceOrTour) && results.length < limit) {
+  if (results.length < limit) {
     try {
-      const searchTarget = isHotelOrStay ? `${cleanSubject} ${matchingHub} hotel` : `${cleanSubject} ${destClean} travel`;
-      const [ddgUrls, tavilyUrls] = await Promise.all([
-        scrapeDuckDuckGoImages(searchTarget, limit - results.length, signal).catch(() => []),
-        tavilySearchImages(`${searchTarget} photo`, limit * 2, signal).catch(() => []),
-      ]);
-      addUrls(ddgUrls, isHotelOrStay ? "Hotel Verified Photo" : "Web Search");
-      addUrls(tavilyUrls, "Web Verified");
+      const wikiResults = await Promise.all(
+        searchTerms.slice(0, 2).map((term) => scrapeWikipediaPageImage(term, signal).catch(() => null))
+      );
+      wikiResults.forEach((u) => { if (u) addUrls([u], "Wikipedia"); });
     } catch {
       // continue
     }
   }
 
-  // 1 & 2. Wikipedia PageImages & Wikimedia Commons
+  // ---- TIER 2: SEMI-TRUSTED (Wikimedia Commons subject search) ----
+  // Commons title search is reasonably subject-matched; allowed for all types.
   if (results.length < limit) {
     try {
-      const [wikiResults, commonsResults] = await Promise.all([
-        Promise.all(searchTerms.slice(0, 2).map((term) => scrapeWikipediaPageImage(term, signal).catch(() => null))),
-        Promise.all(searchTerms.slice(0, 2).map((term) => scrapeCommonsImages(term, limit, signal).catch(() => []))),
-      ]);
-      wikiResults.forEach((u) => { if (u) addUrls([u], "Wikipedia"); });
+      const commonsResults = await Promise.all(
+        searchTerms.slice(0, 2).map((term) => scrapeCommonsImages(term, limit, signal).catch(() => []))
+      );
       commonsResults.flat().forEach((u) => addUrls([u], "Wikimedia Commons"));
     } catch {
       // continue
     }
   }
 
-  // 3 & 4. Tavily & DuckDuckGo Fallback for remaining slots
-  if (results.length < limit) {
+  // ---- TIER 3: FUZZY WEB SEARCH (DuckDuckGo / Tavily / Google Images) ----
+  // These are unreliable for a NAMED landmark (can return an unrelated photo),
+  // so they are ONLY used for hotels & experiences — where a representative
+  // photo is acceptable — and NEVER for subject-lock-required places.
+  if (!requiresSubjectLock && results.length < limit) {
     try {
-      const [tavilyUrls, ddgUrls] = await Promise.all([
-        tavilySearchImages(`${cleanSubject} ${destClean} photo`, limit * 2, signal).catch(() => []),
-        scrapeDuckDuckGoImages(`${cleanSubject} ${destClean}`, limit - results.length, signal).catch(() => []),
+      const searchTarget = isHotelOrStay ? `${cleanSubject} ${matchingHub} hotel` : `${cleanSubject} ${destClean}`;
+      const [googleSearchUrls, ddgUrls, tavilyUrls] = await Promise.all([
+        CAP.googleImages ? scrapeGoogleCustomSearchImages(searchTarget, limit, signal).catch(() => []) : Promise.resolve([]),
+        scrapeDuckDuckGoImages(searchTarget, limit, signal).catch(() => []),
+        tavilySearchImages(`${searchTarget} photo`, limit * 2, signal).catch(() => []),
       ]);
+      addUrls(googleSearchUrls, "Google Images");
+      addUrls(ddgUrls, isHotelOrStay ? "Hotel Photo" : "Web Search");
       addUrls(tavilyUrls, "Web Verified");
-      addUrls(ddgUrls, "Web Search");
     } catch {
-      // ignore
+      // continue
     }
   }
 
+  // For subject-lock-required places with no trusted photo, return [] so the UI
+  // shows a clean placeholder — we NEVER fall back to a fuzzy/wrong image.
   return results;
 }
 
