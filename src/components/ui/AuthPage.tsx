@@ -333,7 +333,7 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
         </header>
 
         {/* Main Split Content with 50/50 Uniform Symmetrical Columns */}
-        <main className="mx-auto max-w-6xl xl:max-w-7xl px-4 py-5 sm:px-6 sm:py-8">
+        <main className="mx-auto max-w-6xl xl:max-w-7xl px-4 pt-5 pb-24 sm:px-6 sm:pt-8 sm:pb-28">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
             
             {/* LEFT COLUMN: Uniformly Scaled Panoramic World Screensaver */}
@@ -454,7 +454,7 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
 
                   {/* Verified Photo Gallery Scroller (below the images) */}
                   {gallery.length > 1 && (
-                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                    <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain no-scrollbar pb-0.5">
                       {gallery.map((url, idx) => (
                         <button
                           key={url}
@@ -549,7 +549,7 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
                   <span>Discovered Spots ({spots.length})</span>
                   <span>{isScouting ? "📡 Scouting..." : "✓ Auto Radar"}</span>
                 </div>
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+                <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain no-scrollbar pb-1">
                   {spots.map((spot, idx) => {
                     const isSelected = idx === currentIndex;
                     return (

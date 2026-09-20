@@ -1,16 +1,19 @@
 import "server-only";
 import type { MediaImage, ImageCategory } from "../types";
 import { tavilySearchImages } from "./tavily";
+import { getCuratedPlaceImage } from "../research/media";
 import { ENV, CAP } from "./env";
 
 // ============================================================================
 // Multi-Engine Live Web Image Scraper
 // Prioritizes:
-// 1. Google Custom Search (if GOOGLE_SEARCH_API_KEY & GOOGLE_SEARCH_CX configured)
-// 2. Wikipedia PageImages (High-res authentic editorial landmark photography)
-// 3. Wikimedia Commons API (Direct subject photo archive)
-// 4. Tavily Live Web Images (Real scraped web page photos)
-// 5. DuckDuckGo Live Images (High-coverage web search)
+// 1. Google Places Official Photos API (when configured)
+// 2. Google Custom Search (if GOOGLE_SEARCH_API_KEY & GOOGLE_SEARCH_CX configured)
+// 3. Wikipedia PageImages (High-res authentic editorial landmark photography)
+// 4. Wikimedia Commons API (Direct subject photo archive)
+// 5. Tavily Live Web Images (Real scraped web page photos)
+// 6. DuckDuckGo Live Images (High-coverage web search)
+// 7. Guaranteed Curated Visual Excellence Fallback (Unsplash)
 // ============================================================================
 
 const UA = "TravelismApp/2.1 (https://travelism.app; support@travelism.app) Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -51,18 +54,51 @@ export function isBadImage(url: string): boolean {
     /receipt/i,
     /blueprint/i,
     /schematic/i,
+    /poster/i,
+    /cover/i,
+    /dvd/i,
+    /album/i,
+    /soundtrack/i,
+    /cd_front/i,
+    /billboard/i,
+    /transparent\.png/i,
+    /1x1/i,
+    /blank/i,
+    /placeholder/i,
   ];
 
   return BAD_PATTERNS.some((pat) => pat.test(u));
 }
 
-function cleanQueryTerms(raw: string): string[] {
+export function cleanQueryTerms(raw: string, destination?: string): string[] {
   const clean = raw.replace(/\s*\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
   const insideParens = (raw.match(/\(([^)]+)\)/)?.[1] || "").trim();
   const queries: string[] = [clean];
   if (insideParens && insideParens.length > 3 && insideParens.toLowerCase() !== clean.toLowerCase()) {
     queries.push(insideParens);
   }
+
+  // Strip touristy/generic suffixes like "Sunrise Viewpoint", "Viewpoint", "Crater", "Temple", etc.
+  const stripped = clean
+    .replace(/\b(Sunrise\s*Viewpoint|Sunset\s*Viewpoint|Viewpoint|Lookout|Overlook|Crater|Caldera|Peak|Hill|Temple|Waterfall|Waterfalls|Tour|Pass|Trail|Valley|National\s*Park|Park)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stripped && stripped.length > 2 && stripped.toLowerCase() !== clean.toLowerCase()) {
+    queries.push(stripped);
+  }
+
+  // Handle Mount -> Gunung (common for Indonesian/Asian landmarks)
+  if (/\bMount\b/i.test(clean)) {
+    queries.push(clean.replace(/\bMount\b/gi, "Gunung"));
+    if (stripped) queries.push(stripped.replace(/\bMount\b/gi, "Gunung"));
+  }
+
+  if (destination && destination.trim()) {
+    const d = destination.trim();
+    queries.push(`${clean} ${d}`);
+    if (stripped) queries.push(`${stripped} ${d}`);
+  }
+
   // Compound names like "Vatican Museums & Sistine Chapel" or "St Peter's
   // Basilica and Square" are NOT single Wikipedia titles — split on & / and / ,
   // and also try each part so at least one resolves to a real article image.
@@ -130,9 +166,21 @@ async function scrapeGooglePlacesPhotos(query: string, limit = 3, signal?: Abort
   }
 }
 
-function isPersonArticle(title: string, desc?: string): boolean {
+function isIrrelevantArticle(title: string, desc?: string): boolean {
   const s = `${title || ""} ${desc || ""}`.toLowerCase();
-  return /\b(born\s*\d{4}|\(\d{4}[–-]\d{4}\)|\b\d{4}[–-]\d{4}\b|prince|princess|duke|duchess|monarch|actor|actress|politician|minister|musician|singer|footballer|cricketer|biography)\b/i.test(s);
+  // Biographical person
+  if (/\b(born\s*\d{4}|\(\d{4}[–-]\d{4}\)|\b\d{4}[–-]\d{4}\b|prince|princess|duke|duchess|monarch|actor|actress|politician|minister|musician|singer|footballer|cricketer|biography)\b/i.test(s)) {
+    return true;
+  }
+  // Entertainment media / fiction / films / albums (e.g. 1958 film "Sea of Sand", "King Kong")
+  if (/\b(film|movie|soundtrack|album|song|single|novel|comic|tv series|television series|video game|fictional character|band|musical|broadcast)\b/i.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+function isPersonArticle(title: string, desc?: string): boolean {
+  return isIrrelevantArticle(title, desc);
 }
 
 /**
@@ -402,15 +450,17 @@ export async function scrapeLiveSubjectImages(
     .filter(Boolean);
   const matchingHub = hubs.find((h) => new RegExp(`\\b${h}\\b`, "i").test(cleanSubject)) || hubs[0] || destClean;
 
+  const candidateTerms = cleanQueryTerms(cleanSubject, matchingHub);
   const searchTerms = Array.from(
     new Set([
-      cleanSubject, // Exact attraction title (best for Wikipedia PageImages)
+      cleanSubject,
       `${cleanSubject} ${matchingHub}`.trim(),
       `${cleanSubject} ${destClean}`.trim(),
       `${strippedSubject} ${matchingHub}`.trim(),
       strippedSubject,
+      ...candidateTerms,
     ])
-  ).filter((s) => s.length > 2);
+  ).filter((s) => s && s.length > 2);
 
   const seen = new Set<string>();
   const results: LiveScrapedImage[] = [];
@@ -430,10 +480,7 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
-  // ---- TIER 1: SUBJECT-LOCKED SOURCES (always trusted) ----
-  // Google Places official photos (tied to the exact place) + Wikipedia article
-  // image (subject-locked via exact-title lookup). These cannot be an unrelated
-  // photo of the same place, so they're safe for named landmarks.
+  // ---- TIER 1: GOOGLE PLACES OFFICIAL PHOTOS (when configured) ----
   try {
     const googlePlaceUrls = await Promise.all(
       searchTerms.slice(0, 2).map((term) => scrapeGooglePlacesPhotos(term, limit, signal).catch(() => []))
@@ -442,10 +489,12 @@ export async function scrapeLiveSubjectImages(
   } catch {
     // continue
   }
+
+  // ---- TIER 2: WIKIPEDIA PAGEIMAGES (Subject-locked editorial photography) ----
   if (results.length < limit) {
     try {
       const wikiResults = await Promise.all(
-        searchTerms.slice(0, 2).map((term) => scrapeWikipediaPageImage(term, signal).catch(() => null))
+        searchTerms.slice(0, 3).map((term) => scrapeWikipediaPageImage(term, signal).catch(() => null))
       );
       wikiResults.forEach((u) => { if (u) addUrls([u], "Wikipedia"); });
     } catch {
@@ -453,8 +502,7 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
-  // ---- TIER 2: SEMI-TRUSTED (Wikimedia Commons subject search) ----
-  // Commons title search is reasonably subject-matched; allowed for all types.
+  // ---- TIER 3: WIKIMEDIA COMMONS ARCHIVE ----
   if (results.length < limit) {
     try {
       const commonsResults = await Promise.all(
@@ -466,28 +514,33 @@ export async function scrapeLiveSubjectImages(
     }
   }
 
-  // ---- TIER 3: FUZZY WEB SEARCH (DuckDuckGo / Tavily / Google Images) ----
-  // These are unreliable for a NAMED landmark (can return an unrelated photo),
-  // so they are ONLY used for hotels & experiences — where a representative
-  // photo is acceptable — and NEVER for subject-lock-required places.
-  if (!requiresSubjectLock && results.length < limit) {
+  // ---- TIER 4: WEB SEARCH ENGINES (Google Images / DuckDuckGo / Tavily) ----
+  if (results.length < limit) {
     try {
-      const searchTarget = isHotelOrStay ? `${cleanSubject} ${matchingHub} hotel` : `${cleanSubject} ${destClean}`;
+      const searchTarget = isHotelOrStay
+        ? `${cleanSubject} ${matchingHub} hotel`
+        : `${cleanSubject} ${matchingHub} travel scenery`;
       const [googleSearchUrls, ddgUrls, tavilyUrls] = await Promise.all([
         CAP.googleImages ? scrapeGoogleCustomSearchImages(searchTarget, limit, signal).catch(() => []) : Promise.resolve([]),
         scrapeDuckDuckGoImages(searchTarget, limit, signal).catch(() => []),
         tavilySearchImages(`${searchTarget} photo`, limit * 2, signal).catch(() => []),
       ]);
       addUrls(googleSearchUrls, "Google Images");
-      addUrls(ddgUrls, isHotelOrStay ? "Hotel Photo" : "Web Search");
+      addUrls(ddgUrls, isHotelOrStay ? "Hotel Photo" : "Web Photo");
       addUrls(tavilyUrls, "Web Verified");
     } catch {
       // continue
     }
   }
 
-  // For subject-lock-required places with no trusted photo, return [] so the UI
-  // shows a clean placeholder — we NEVER fall back to a fuzzy/wrong image.
+  // ---- TIER 5: GUARANTEED CURATED VISUAL EXCELLENCE FALLBACK ----
+  // If external live scraping yields no photo, inject a high-resolution, theme-matched asset
+  // so no card EVER displays as a blank/broken box.
+  if (results.length === 0) {
+    const curated = getCuratedPlaceImage(cleanSubject, destClean, category);
+    results.push(curated);
+  }
+
   return results;
 }
 

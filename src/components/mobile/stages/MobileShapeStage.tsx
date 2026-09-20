@@ -243,23 +243,35 @@ export function MobileShapeStage() {
       </div>
 
       {/* 3. TRAVELERS COUNT */}
-      <div className="card p-4 shadow-sm border-line space-y-3">
+      <div className={cx(
+        "card p-4 shadow-sm space-y-3 transition-all",
+        blob.travelers === 0 ? "border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/30" : "border-line"
+      )}>
         <div className="flex items-center justify-between">
           <div>
             <div className="label-eyebrow text-[10px]">Travelers</div>
             <div className="text-base font-bold text-ink mt-0.5">
-              {blob.travelers} Person{blob.travelers > 1 ? "s" : ""}
+              {blob.travelers === 0 ? (
+                <span className="text-amber-600 dark:text-amber-400">0 (Party size unconfirmed)</span>
+              ) : (
+                `${blob.travelers} ${blob.travelers === 1 ? "Person" : "Persons"}`
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setTravelers(Math.max(1, blob.travelers - 1))}
+              onClick={() => setTravelers(Math.max(0, blob.travelers - 1))}
               className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-paper-2 text-lg font-bold text-ink active:scale-95 shadow-xs"
             >
               −
             </button>
-            <span className="font-bold text-base text-ink w-6 text-center">{blob.travelers}</span>
+            <span className={cx(
+              "font-bold text-base w-6 text-center",
+              blob.travelers === 0 ? "text-amber-600 dark:text-amber-400 font-extrabold" : "text-ink"
+            )}>
+              {blob.travelers}
+            </span>
             <button
               onClick={() => setTravelers(Math.min(20, blob.travelers + 1))}
               className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-paper-2 text-lg font-bold text-ink active:scale-95 shadow-xs"
@@ -268,6 +280,13 @@ export function MobileShapeStage() {
             </button>
           </div>
         </div>
+
+        {blob.travelers === 0 && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
+            <span className="text-base">⚠️</span>
+            <span className="leading-tight">Please select your party size to calculate per-person rates and room counts.</span>
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
           {TRAVELER_PRESETS.map((p) => (
@@ -375,7 +394,7 @@ export function MobileShapeStage() {
         <div className="flex items-center justify-between gap-3 max-w-lg mx-auto">
           <div>
             <div className="text-xs font-bold text-ink">
-              {blob.durationDays} Days · {blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""}
+              {blob.durationDays} Days · {blob.travelers === 0 ? "0 Travelers (Party size unconfirmed)" : `${blob.travelers} Traveler${blob.travelers > 1 ? "s" : ""}`}
             </div>
             <div className="text-[10px] text-ink-faint">
               {activeStayMode === "wild_camping" ? "⛺ Wild Camping (₹0)" : activeStayMode === "none" ? "🚫 0 Hotels" : "🏨 Hotels"} · {blob.origin || "Origin"}

@@ -39,21 +39,66 @@ export function MobileModifySheet() {
   const [text, setText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const bottomAnchor = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
+
+  const handleScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceToBottom <= 70;
+    setIsAtBottom(atBottom);
+    setShowScrollBottomBtn(!atBottom);
+    if (atBottom) setHasUnread(false);
+  };
+
+  const scrollToBottom = (smooth = true) => {
+    const behavior: ScrollBehavior = smooth ? "smooth" : "instant";
+    if (bottomAnchor.current) {
+      bottomAnchor.current.scrollIntoView({ behavior, block: "end" });
+    } else if (scroller.current) {
+      scroller.current.scrollTo({ top: scroller.current.scrollHeight, behavior });
+    }
+    setHasUnread(false);
+    setShowScrollBottomBtn(false);
+  };
 
   useEffect(() => {
     if (isOpen) {
-      scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
+      setTimeout(() => {
+        scrollToBottom(false);
+      }, 50);
     }
-  }, [log, isTyping, isOpen]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (isAtBottom) {
+        scrollToBottom(true);
+      } else {
+        setHasUnread(true);
+      }
+    }
+  }, [log.length, isTyping, isOpen]);
 
   async function send(instruction: string) {
     if (!instruction.trim() || isTyping) return;
     const userPrompt = instruction.trim();
     setText("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const userMsgId = `usr_${Date.now()}`;
     addChatMessage({ id: userMsgId, role: "user", text: userPrompt, timestamp: nowTime });
+
+    setTimeout(() => {
+      scrollToBottom(true);
+    }, 20);
+
     setIsTyping(true);
 
     try {
@@ -260,7 +305,11 @@ export function MobileModifySheet() {
               </div>
 
               {/* Chat Message Stream */}
-              <div ref={scroller} className="flex-1 overflow-y-auto px-4 py-4 space-y-3.5">
+              <div
+                ref={scroller}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto px-4 py-4 space-y-3.5 scroll-smooth relative"
+              >
                 {log.map((m) => (
                   <div
                     key={m.id}
@@ -317,30 +366,64 @@ export function MobileModifySheet() {
                     <span className="ml-1 text-[11px] font-medium">Recalling memory & thinking...</span>
                   </div>
                 )}
+
+                {/* Bottom anchor for smooth scroll */}
+                <div ref={bottomAnchor} className="h-2 shrink-0" />
               </div>
 
+              {/* Floating "Scroll to Bottom" button */}
+              <AnimatePresence>
+                {showScrollBottomBtn && (
+                  <motion.button
+                    initial={{ opacity: 0, scale: 0.8, y: 8 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.8, y: 8 }}
+                    onClick={() => scrollToBottom(true)}
+                    className="absolute bottom-20 right-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-paper-2 text-ink shadow-lg backdrop-blur-md active:scale-90 transition"
+                    title="Scroll to bottom"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                    </svg>
+                    {hasUnread && (
+                      <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                      </span>
+                    )}
+                  </motion.button>
+                )}
+              </AnimatePresence>
+
               {/* Chat Input Bar */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  send(text);
-                }}
-                className="flex items-center gap-2 border-t border-line bg-paper px-3 py-2.5"
-              >
-                <input
+              <div className="flex items-end gap-2 border-t border-line bg-paper px-3 py-2.5 shrink-0">
+                <textarea
+                  ref={textareaRef}
                   value={text}
-                  onChange={(e) => setText(e.target.value)}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 100)}px`;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send(text);
+                    }
+                  }}
+                  rows={1}
                   placeholder="Ask anything or request trip changes..."
-                  className="flex-1 rounded-xl border border-line bg-paper-2 px-3.5 py-2.5 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-brand"
+                  className="flex-1 resize-none max-h-24 min-h-[38px] rounded-xl border border-line bg-paper-2 px-3.5 py-2 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-brand leading-relaxed scrollbar-none"
                 />
                 <button
-                  type="submit"
+                  onClick={() => send(text)}
                   disabled={!text.trim() || isTyping}
-                  className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-sm font-bold text-white shadow-xs disabled:opacity-40 active:scale-95 transition shrink-0"
+                  className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-sm font-bold text-white shadow-xs disabled:opacity-40 active:scale-95 transition shrink-0 mb-0.5"
+                  title="Send message"
                 >
                   ↑
                 </button>
-              </form>
+              </div>
             </motion.div>
           </div>
         )}

@@ -2,7 +2,8 @@
 
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
-import { cx } from "@/lib/format";
+import { cx, getActiveCurrency, FX_RATES_FROM_INR, CURRENCY_SYMBOLS, type SupportedCurrency } from "@/lib/format";
+import { useAuth } from "@/store/authStore";
 
 export function ScoreBar({ value, max = 10, label }: { value: number; max?: number; label?: string }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
@@ -36,20 +37,28 @@ export function ConfidencePill({ value }: { value: number }) {
 
 export function AnimatedNumber({
   value,
-  prefix = "₹",
+  prefix,
+  currency,
   className,
 }: {
   value: number;
   prefix?: string;
+  currency?: SupportedCurrency;
   className?: string;
 }) {
-  const [display, setDisplay] = useState(value);
-  const prev = useRef(value);
+  const activeCurrency = useAuth((s) => s.user?.preferences?.currency) || getActiveCurrency();
+  const curr = currency || activeCurrency;
+  const rate = FX_RATES_FROM_INR[curr] ?? 1;
+  const symbol = prefix !== undefined ? prefix : CURRENCY_SYMBOLS[curr] ?? "₹";
+  const convertedValue = value * rate;
+
+  const [display, setDisplay] = useState(convertedValue);
+  const prev = useRef(convertedValue);
   const raf = useRef<number>();
 
   useEffect(() => {
     const from = prev.current;
-    const to = value;
+    const to = convertedValue;
     const start = performance.now();
     const dur = 650;
     const tick = (t: number) => {
@@ -63,12 +72,14 @@ export function AnimatedNumber({
     return () => {
       if (raf.current) cancelAnimationFrame(raf.current);
     };
-  }, [value]);
+  }, [convertedValue]);
+
+  const locale = curr === "JPY" ? "ja-JP" : curr === "INR" ? "en-IN" : "en-US";
 
   return (
     <span className={className}>
-      {prefix}
-      {Math.round(display).toLocaleString("en-IN")}
+      {symbol}
+      {Math.round(display).toLocaleString(locale)}
     </span>
   );
 }

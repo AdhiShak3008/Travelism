@@ -56,6 +56,27 @@ const DEFAULT_PREFERENCES: TravelPreferences = {
   accessibilityNeeds: [],
 };
 
+export const PREFERENCES_STORAGE_KEY = "travelism_user_preferences_v1";
+
+export function loadSavedPreferences(): TravelPreferences {
+  if (typeof window === "undefined") return { ...DEFAULT_PREFERENCES };
+  try {
+    const raw = localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_PREFERENCES, ...parsed };
+    }
+  } catch {}
+  return { ...DEFAULT_PREFERENCES };
+}
+
+export function savePreferencesToStorage(prefs: TravelPreferences): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {}
+}
+
 const DEMO_USER: UserProfile = {
   id: "usr_demo_vip",
   name: "Aditya Shakya",
@@ -150,6 +171,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
   closePreferences: () => set({ isPreferencesOpen: false }),
 
   login: (email: string, name = "Traveler") => {
+    const savedPrefs = loadSavedPreferences();
     const newUser: UserProfile = {
       id: `usr_${Date.now()}`,
       name: name || email.split("@")[0],
@@ -159,7 +181,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       isDemo: false,
       memberSince: "Today",
       savedTrips: [],
-      preferences: { ...DEFAULT_PREFERENCES },
+      preferences: savedPrefs,
     };
     
     // Save active session for 400 minutes
@@ -174,7 +196,11 @@ export const useAuth = create<AuthStore>((set, get) => ({
   },
 
   loginAsDemo: () => {
-    const demoUser = { ...DEMO_USER };
+    const savedPrefs = loadSavedPreferences();
+    const demoUser: UserProfile = {
+      ...DEMO_USER,
+      preferences: savedPrefs,
+    };
     const session = saveActiveSession(demoUser);
     set({
       user: demoUser,
@@ -199,8 +225,18 @@ export const useAuth = create<AuthStore>((set, get) => ({
   restoreSession: () => {
     const res = validateStoredSession();
     if (res.status === "valid" && res.session?.user) {
+      const savedPrefs = loadSavedPreferences();
+      const restoredUser: UserProfile = {
+        ...res.session.user,
+        preferences: {
+          ...DEFAULT_PREFERENCES,
+          ...res.session.user.preferences,
+          ...savedPrefs,
+        },
+      };
+      console.log("[AuthStore] Restored session with preferences:", restoredUser.preferences);
       set({
-        user: res.session.user,
+        user: restoredUser,
         isAuthenticated: true,
         sessionExpiresAt: res.session.expiresAt,
         logoutReason: null,
@@ -208,6 +244,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       });
       return { status: "valid" };
     } else if (res.status === "expired") {
+      console.log("[AuthStore] Session expired");
       set({
         user: null,
         isAuthenticated: false,
@@ -217,6 +254,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       });
       return { status: "expired" };
     } else if (res.status === "new_device") {
+      console.log("[AuthStore] New device detected");
       set({
         user: null,
         isAuthenticated: false,
@@ -226,6 +264,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       });
       return { status: "new_device" };
     } else {
+      console.log("[AuthStore] No session found");
       set({
         user: null,
         isAuthenticated: false,
@@ -277,7 +316,13 @@ export const useAuth = create<AuthStore>((set, get) => ({
 
   updatePreferences: (prefs) => {
     const { user } = get();
-    if (!user) return;
+    if (!user) {
+      console.warn("[AuthStore] Updating fallback preferences without active user");
+      const current = loadSavedPreferences();
+      const updated = { ...current, ...prefs };
+      savePreferencesToStorage(updated);
+      return;
+    }
     const updatedUser = {
       ...user,
       preferences: {
@@ -285,6 +330,8 @@ export const useAuth = create<AuthStore>((set, get) => ({
         ...prefs,
       },
     };
+    console.log("[AuthStore] Saving preferences to storage & session:", updatedUser.preferences);
+    savePreferencesToStorage(updatedUser.preferences);
     saveActiveSession(updatedUser);
     set({ user: updatedUser });
   },

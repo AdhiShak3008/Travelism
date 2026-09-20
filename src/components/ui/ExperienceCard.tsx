@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import type { Experience } from "@/lib/types";
@@ -58,7 +59,12 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
 
   const hasPrice = exp.price > 0;
   const priceLabel = hasPrice ? inr(exp.price) : exp.price === 0 && exp.priceNote?.includes("free") ? "Free" : "Price on booking";
-  const hasImage = !!exp.images[0]?.url;
+  const fallbackExpUrl = "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80";
+  const [imgSrc, setImgSrc] = useState(exp.images[0]?.url || fallbackExpUrl);
+
+  useEffect(() => {
+    setImgSrc(exp.images[0]?.url || fallbackExpUrl);
+  }, [exp.images]);
 
   const bookingSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(`${exp.name} tickets booking ${destinationName}`)}`;
   const youtubeSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${exp.name} ${destinationName}`)}`;
@@ -75,36 +81,24 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
     >
       <div>
         <div
-          className={cx("relative aspect-[16/10] overflow-hidden", hasImage && "cursor-zoom-in")}
-          onClick={() => hasImage && lightbox.open(exp.images, 0, exp.name)}
+          className="relative aspect-[16/10] overflow-hidden cursor-zoom-in"
+          onClick={() => lightbox.open(exp.images.length > 0 ? exp.images : [{ id: `fallback_${exp.id}`, url: imgSrc, category: "attraction", credit: "Travelism", provenance: "editorial" }], 0, exp.name)}
         >
-          {hasImage ? (
-            <>
-              <Image
-                src={exp.images[0].url}
-                alt={exp.name}
-                fill
-                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 380px"
-                className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-                unoptimized
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
-            </>
-          ) : (
-            <div className={cx("absolute inset-0 grid place-items-center bg-gradient-to-br", CATEGORY_TINT[exp.category])}>
-              <span className="text-5xl opacity-70">{CATEGORY_GLYPH[exp.category]}</span>
-            </div>
-          )}
+          <Image
+            src={imgSrc}
+            alt={exp.name}
+            fill
+            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 380px"
+            className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+            onError={() => {
+              if (imgSrc !== fallbackExpUrl) setImgSrc(fallbackExpUrl);
+            }}
+            unoptimized
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
 
           <div className="absolute left-3 top-3 flex gap-1.5">
-            <span
-              className={cx(
-                "inline-flex items-center gap-1 rounded-md px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-sm",
-                hasImage
-                  ? "border border-white/30 bg-black/60 text-white"
-                  : "border border-line bg-card text-ink"
-              )}
-            >
+            <span className="inline-flex items-center gap-1 rounded-md px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-sm border border-white/30 bg-black/60 text-white">
               {CATEGORY_LABEL[exp.category]}
             </span>
           </div>
@@ -127,7 +121,7 @@ export function ExperienceCard({ exp }: { exp: Experience }) {
           </button>
 
           <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2">
-            <h3 className={cx("display min-w-0 text-lg font-semibold", hasImage ? "text-white drop-shadow-md" : "text-ink")}>
+            <h3 className="display min-w-0 text-lg font-semibold text-white drop-shadow-md">
               {exp.name}
             </h3>
             <div className="shrink-0 rounded-xl border border-line/60 bg-card/95 backdrop-blur-md px-2.5 py-1 text-right shadow-md">

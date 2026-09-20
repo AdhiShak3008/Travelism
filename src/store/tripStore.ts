@@ -61,7 +61,7 @@ const DEFAULT_PREFS: Preferences = {
   pace: "balanced",
   minimizeHotelChanges: false,
   avoidEarlyFlights: false,
-  travelers: 2,
+  travelers: 0,
   accessibilityNeeds: [],
   priorities: [],
   deprioritized: [],
@@ -72,12 +72,13 @@ const VIBE_TO_PRIORITY: { test: RegExp; tags: string[]; mood?: Partial<Record<Mo
   { test: /mountain|peak|alpine|lake|fjord/i, tags: ["scenery", "mountains"], mood: { scenic: 2 } },
   { test: /photo|golden hour|sunset|sunrise/i, tags: ["photography", "scenery"], mood: { photography: 2, scenic: 1 } },
   { test: /beach|island|coast|ocean|sea/i, tags: ["beaches", "coastal"], mood: { scenic: 1 } },
-  { test: /histor|heritage|ancient|monument|temple|fort|palace|museum|culture/i, tags: ["heritage", "culture"], mood: { culture: 2 } },
-  { test: /food|cuisine|culinary|street food|gourmet|dining/i, tags: ["food"], mood: { food: 2 } },
-  { test: /adventure|trek|hike|climb|raft|dive|thrill/i, tags: ["adventure"], mood: { adventure: 2 } },
-  { test: /nightlife|bar|club|party/i, tags: ["nightlife"], mood: { nightlife: 2 } },
-  { test: /wellness|spa|yoga|relax|serene|quiet/i, tags: ["wellness", "comfort"], mood: { comfort: 1, rushing: -1 } },
-  { test: /nature|wildlife|forest|jungle|safari/i, tags: ["wildlife", "nature"], mood: { scenic: 1 } },
+  { test: /histor|heritage|ancient|monument|temple|fort|palace|museum|culture|monaster|art|architecture/i, tags: ["heritage", "culture"], mood: { culture: 2 } },
+  { test: /food|cuisine|culinary|street food|gourmet|dining|wine|bakery|coffee/i, tags: ["food"], mood: { food: 2 } },
+  { test: /bike|cycling|bikepacking|wilderness trail/i, tags: ["bikepacking", "cycling", "adventure", "nature"], mood: { adventure: 2, scenic: 1 } },
+  { test: /adventure|trek|hike|climb|raft|kayak|dive|thrill|trail/i, tags: ["adventure"], mood: { adventure: 2 } },
+  { test: /nightlife|bar|club|party|rooftop lounge/i, tags: ["nightlife"], mood: { nightlife: 2 } },
+  { test: /wellness|spa|thermal|yoga|relax|serene|quiet/i, tags: ["wellness", "comfort"], mood: { comfort: 1, rushing: -1 } },
+  { test: /nature|wildlife|forest|pine|jungle|safari/i, tags: ["wildlife", "nature"], mood: { scenic: 1 } },
 ];
 
 /**
@@ -157,7 +158,7 @@ function emptyBlob(): TripBlob {
     destinationName: "",
     dream: "",
     origin: "Hyderabad",
-    travelers: 2,
+    travelers: 0,
     dates: { start: getDefaultStartDate(), flexible: false },
     durationDays: 7,
     mood: { ...DEFAULT_MOOD },
@@ -232,6 +233,11 @@ interface TripStore {
   // conversational modification & memory
   chatLog: ChatMessage[];
   travelerMemory: TravelerMemory;
+  conciergeOpen: boolean;
+  conciergeInitialPrompt: string | null;
+  openConcierge: (prompt?: string) => void;
+  closeConcierge: () => void;
+  clearConciergeInitialPrompt: () => void;
   addChatMessage: (msg: ChatMessage) => void;
   updateTravelerMemory: (delta: {
     dietary?: string[];
@@ -285,6 +291,20 @@ export const useTrip = create<TripStore>((set, get) => ({
     },
   ],
   travelerMemory: createDefaultTravelerMemory(),
+  conciergeOpen: false,
+  conciergeInitialPrompt: null,
+
+  openConcierge: (prompt) => {
+    set({ conciergeOpen: true, ...(prompt ? { conciergeInitialPrompt: prompt } : {}) });
+  },
+
+  closeConcierge: () => {
+    set({ conciergeOpen: false, conciergeInitialPrompt: null });
+  },
+
+  clearConciergeInitialPrompt: () => {
+    set({ conciergeInitialPrompt: null });
+  },
 
   addChatMessage: (msg) => {
     set((st) => ({
@@ -360,7 +380,7 @@ export const useTrip = create<TripStore>((set, get) => ({
 
     const extractedOriginCity = extractOrigin(dream) || "Hyderabad";
     const extractedDuration = extractDuration(dream) || 7;
-    const extractedTrav = extractTravelers(dream) || prefs.travelers || 2;
+    const extractedTrav = extractTravelers(dream) ?? prefs.travelers ?? 0;
 
     const dreamMentionsStay = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent|no\s*hotel|without\s*hotel|campsite|refugio|mountain\s*hut|bothy|homestay|hotel|resort|hostel/i.test(dream);
     const isOutdoor = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent/i.test(dream);
@@ -378,7 +398,7 @@ export const useTrip = create<TripStore>((set, get) => ({
     const initialMemory = mergeTravelerMemory(createDefaultTravelerMemory(), {
       learnedFacts: [dream],
       keyNotes: [`Dream: "${dream}"`, ...(profile.memoryDelta.keyNotes || [])],
-      companionship: extractedTrav > 1 ? [`Party of ${extractedTrav} travelers`] : ["Solo traveler"],
+      companionship: extractedTrav > 1 ? [`Party of ${extractedTrav} travelers`] : extractedTrav === 1 ? ["Solo traveler"] : ["Party size unconfirmed (0 travelers)"],
       style: isOutdoor ? ["Self-supported / Outdoor camping"] : undefined,
       dietary: profile.memoryDelta.dietary,
       vibes: profile.memoryDelta.vibes,
@@ -407,7 +427,9 @@ export const useTrip = create<TripStore>((set, get) => ({
         {
           id: `init_${Date.now()}`,
           role: "concierge",
-          text: `Hello! I am your AI Travel Concierge for **${dream}**.\n\nAsk me anything about visas, packing, hidden local spots, or ask me to customize your hotel, dates, duration, pace, or daily schedule in real time!`,
+          text: extractedTrav === 0
+            ? `Hello! I am your AI Travel Concierge for **${dream}**.\n\n⚠️ **Note:** Your party size is currently set to **0 travelers**. Please set your number of travelers so flight, stay, and activity costs can be calculated accurately for your party.\n\nAsk me anything about permits, hidden local sights, packing, or ask me to customize your schedule in real time!`
+            : `Hello! I am your AI Travel Concierge for **${dream}**.\n\nAsk me anything about visas, packing, hidden local spots, or ask me to customize your hotel, dates, duration, pace, or daily schedule in real time!`,
           timestamp: "Just now",
         },
       ],
@@ -448,6 +470,7 @@ export const useTrip = create<TripStore>((set, get) => ({
               dietary: profile.memoryDelta.dietary,
               stayMode: initialStayMode,
               currency: useAuth.getState().user?.preferences.currency,
+              vibes: profile.memoryDelta.vibes,
             }
           : undefined;
         const onCache = (info: import("@/lib/liveClient").CacheInfo) => {
@@ -638,7 +661,7 @@ export const useTrip = create<TripStore>((set, get) => ({
 
   setTravelers: (n) => {
     const { blob } = get();
-    const t = Math.max(1, Math.min(20, n));
+    const t = Math.max(0, Math.min(20, Math.round(n)));
     set({ blob: { ...blob, travelers: t, preferences: { ...blob.preferences, travelers: t }, updatedAt: now() } });
     if (blob.hotels.length) get().recompute();
   },
@@ -1245,6 +1268,70 @@ export const useTrip = create<TripStore>((set, get) => ({
         reply = action.pace === "comfortable" ? "Slowed things down — fewer stops, more breathing room." : "Picked up the pace — I've packed a bit more in.";
         break;
       }
+      case "set_stay_mode": {
+        working.preferences = { ...working.preferences, stayMode: action.mode, isSelfSupported: action.mode === "wild_camping" };
+        if (action.mode === "none" || action.mode === "wild_camping") {
+          working.hotels = action.mode === "wild_camping" ? working.hotels : [];
+        }
+        const label =
+          action.mode === "wild_camping" ? "Wild Camping & Bivvies (₹0 lodging)"
+          : action.mode === "none" ? "No hotels (₹0 lodging)"
+          : action.mode === "homestays" ? "Local Homestays"
+          : action.mode === "campsites_refugios" ? "Campsites & Refugios"
+          : "Hotels";
+        deltas.push(`Stay → ${label}`);
+        reply = `Switched your stays to ${label}.`;
+        break;
+      }
+      case "add_activity": {
+        // Add as a custom experience (mirrors addCustomExperience shape).
+        const expId = `custom_exp_${Date.now()}`;
+        const newExp: Experience = {
+          id: expId,
+          name: action.name,
+          category: "adventure",
+          blurb: `Custom planned activity for ${working.destinationName || "your trip"}.`,
+          price: 2000,
+          perPerson: true,
+          durationHours: 3,
+          images: [],
+          sourceIds: [],
+          estimated: true,
+          confidence: 0.95,
+          whyRecommended: "Added via AI Concierge request",
+        };
+        if (dataset) {
+          dataset.experiences = [newExp, ...dataset.experiences.filter((e) => e.name.toLowerCase() !== action.name.toLowerCase())];
+        }
+        working.selectedExperienceIds = Array.from(new Set([...working.selectedExperienceIds, expId]));
+        working.experiences = (dataset?.experiences ?? []).filter((e) => working.selectedExperienceIds.includes(e.id));
+        deltas.push(`Added "${action.name}" to activities`);
+        reply = `Added ${action.name} to your activities.`;
+        break;
+      }
+      case "remove_activity": {
+        const q = action.query.toLowerCase();
+        const hit = working.experiences.find((e) => e.name.toLowerCase().includes(q) || q.includes(e.name.toLowerCase().split(" ")[0]));
+        if (hit) {
+          working.selectedExperienceIds = working.selectedExperienceIds.filter((id) => id !== hit.id);
+          working.experiences = working.experiences.filter((e) => e.id !== hit.id);
+          deltas.push(`Removed "${hit.name}"`);
+          reply = `Removed ${hit.name} from your activities.`;
+        } else {
+          reply = `I couldn't find "${action.query}" in your activities.`;
+        }
+        break;
+      }
+      case "set_day_focus": {
+        const dest = working.destinationName || "Destination";
+        const { title, stops } = generateDayStopsForType(dest, action.focus as any);
+        working.itinerary = working.itinerary.map((d) =>
+          d.day === action.dayNum ? { ...d, title, dayType: action.focus as any, isRestDay: action.focus !== "sightseeing", stops } : d
+        );
+        deltas.push(`Day ${action.dayNum} → ${action.focus}`);
+        reply = `Reshaped Day ${action.dayNum} around ${action.focus}.`;
+        break;
+      }
       case "preference":
       case "unknown":
       default: {
@@ -1413,7 +1500,12 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   reset: () => {
-    const resetMem = createDefaultTravelerMemory();
+    const profile = seedFromProfile();
+    const resetMem = mergeTravelerMemory(createDefaultTravelerMemory(), {
+      dietary: profile.memoryDelta.dietary,
+      vibes: profile.memoryDelta.vibes,
+      keyNotes: profile.memoryDelta.keyNotes,
+    });
     set({
       blob: emptyBlob(),
       dataset: null,

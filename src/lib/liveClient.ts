@@ -81,6 +81,7 @@ export interface ProfileHints {
   dietary?: string[];
   stayMode?: string;
   currency?: string;
+  vibes?: string[];
 }
 
 export async function runLiveInvestigation(

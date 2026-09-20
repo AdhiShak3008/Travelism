@@ -55,7 +55,9 @@ export function saveActiveSession(user: any): StoredSession {
     try {
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
       localStorage.setItem(DEVICE_SIGNATURE_KEY, session.deviceSignature);
-    } catch {
+      console.log("[Session] Saved to localStorage:", { user: user.name, preferences: user.preferences });
+    } catch (err) {
+      console.error("[Session] Storage failed:", err);
       // Storage unavailable / private mode
     }
   }
@@ -92,11 +94,13 @@ export function validateStoredSession(): {
       return { status: "expired", session: null };
     }
 
-    // 2. Check Device & Location signature mismatch (incognito / new browser / new device / new location)
+    // 2. Keep device signature updated without wiping valid user session on benign changes (e.g. window resize/devtools)
     const currentSignature = getDeviceSignature();
     if (session.deviceSignature && session.deviceSignature !== currentSignature) {
-      clearActiveSession();
-      return { status: "new_device", session: null };
+      session.deviceSignature = currentSignature;
+      try {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+      } catch {}
     }
 
     const remainingMs = Math.max(0, session.expiresAt - now);

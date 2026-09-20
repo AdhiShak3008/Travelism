@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { WORLD_SPOTS_CATALOG, type DiscoveredSpot } from "@/lib/globalSpots";
 import { scrapeLiveSubjectImages } from "@/lib/server/imageScraper";
+import { nextGeneratedPlaces, warmGenerator, type GeneratedPlace } from "@/lib/server/placeGenerator";
+import { redisGetJson, redisSetJson, redisEnabled } from "@/lib/server/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,14 +79,26 @@ function slug(s: string): string {
 // Real, live current temperature for a place via free Open-Meteo (no API key):
 // geocode the name → current_weather. Returns a display string like
 // "19°C · Rainy", or null when it can't be resolved (caller falls back).
+async function geocode(q: string, signal?: AbortSignal): Promise<{ latitude: number; longitude: number } | null> {
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`;
+    const res = await fetch(url, { signal });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { results?: { latitude: number; longitude: number }[] };
+    return data.results?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function liveWeather(name: string, country: string, signal?: AbortSignal): Promise<string | null> {
   try {
-    const geoUrl =
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=en&format=json`;
-    const geoRes = await fetch(geoUrl, { signal });
-    if (!geoRes.ok) return null;
-    const geo = (await geoRes.json()) as { results?: { latitude: number; longitude: number }[] };
-    const loc = geo.results?.[0];
+    // Try the bare name first; if the place name doesn't geocode (e.g. a valley
+    // or region), fall back to the first token, then the country.
+    const loc =
+      (await geocode(name, signal)) ||
+      (await geocode(name.split(/[,(]/)[0].trim(), signal)) ||
+      (country ? await geocode(country, signal) : null);
     if (!loc) return null;
 
     const wxUrl =
@@ -115,10 +129,11 @@ async function wikiSummary(name: string, signal?: AbortSignal): Promise<string |
   }
 }
 
-async function liveSpot(entry: PoolEntry, req: Request): Promise<DiscoveredSpot | null> {
+async function liveSpot(entry: PoolEntry | GeneratedPlace, req: Request): Promise<DiscoveredSpot | null> {
   const [imgs, summary, weather] = await Promise.all([
-    // fetch several verified images so the passport card can show a gallery scroller
-    scrapeLiveSubjectImages(entry.name, entry.country, "landscape", 5, req.signal).catch(() => []),
+    // 3 verified images is enough for the gallery scroller and keeps enrichment
+    // fast so the warm pool stays filled (5 was the throughput bottleneck).
+    scrapeLiveSubjectImages(entry.name, entry.country, "landscape", 3, req.signal).catch(() => []),
     wikiSummary(entry.name, req.signal).catch(() => null),
     liveWeather(entry.name, entry.country, req.signal).catch(() => null),
   ]);
@@ -152,33 +167,83 @@ async function liveSpot(entry: PoolEntry, req: Request): Promise<DiscoveredSpot 
 // waiting on live scraping; the pool refills asynchronously for the next visit.
 // ---------------------------------------------------------------------------
 const warmPool: DiscoveredSpot[] = [];
-const WARM_TARGET = 6;
+const WARM_TARGET = 10; // keep a deeper buffer so rapid visits stay instant
 let refilling = false;
 let warmStarted = false;
 
-function pickCandidates(exclude: Set<string>): PoolEntry[] {
+// Last-resort fallback pick from the small hardcoded POOL — only used if the
+// LLM generator is unavailable and the warm pool is empty.
+function fallbackCandidates(exclude: Set<string>): PoolEntry[] {
   const avail = POOL.filter((s) => !exclude.has(`live-${slug(s.name)}`));
   const src = avail.length ? avail : POOL;
   return [...src].sort(() => Math.random() - 0.5);
 }
 
-// Background refill: enrich random spots until the warm pool hits its target.
+// Background refill: enrich LLM-GENERATED random spots until the warm pool hits
+// its target. Falls back to the static POOL only if generation yields nothing.
 async function refillWarmPool() {
   if (refilling || warmPool.length >= WARM_TARGET) return;
   refilling = true;
   try {
     const have = new Set(warmPool.map((s) => s.id));
-    for (const entry of pickCandidates(have)) {
+    const need = WARM_TARGET - warmPool.length;
+
+    // Primary source: LLM-generated random destinations.
+    let entries: (GeneratedPlace | PoolEntry)[] = await nextGeneratedPlaces(need + 3, {
+      exclude: new Set([...have].map((id) => id.replace(/^live-/, ""))),
+    }).catch(() => []);
+
+    // Fallback: static pool (should rarely trigger).
+    if (entries.length === 0) entries = fallbackCandidates(have);
+
+    // Enrich CONCURRENTLY (each spot does weather + images + summary) so the
+    // buffer fills in one round-trip's time instead of N sequential ones.
+    const enriched = await Promise.all(
+      entries.slice(0, need + 3).map((entry) => liveSpot(entry, new Request("http://x")).catch(() => null))
+    );
+    for (const spot of enriched) {
       if (warmPool.length >= WARM_TARGET) break;
-      const spot = await liveSpot(entry, new Request("http://x"));
       if (spot && !warmPool.some((s) => s.id === spot.id)) warmPool.push(spot);
     }
+    // Persist to Redis so the pool survives restarts/deploys.
+    void saveWarmPoolToRedis();
   } catch {
     /* best-effort */
   } finally {
     refilling = false;
   }
 }
+
+// Persist the warm pool to Redis so it survives server restarts/deploys.
+async function saveWarmPoolToRedis(): Promise<void> {
+  if (!redisEnabled() || warmPool.length === 0) return;
+  try {
+    // TTL 24 hours: the pool refreshes as needed, and old pools (>24h stale) are
+    // acceptable to discard and re-warm.
+    await redisSetJson("spots:warmpool", warmPool, 86400);
+  } catch {
+    /* best-effort; Redis write failure doesn't block the app */
+  }
+}
+
+// Load the warm pool from Redis if it exists (on server startup).
+async function loadWarmPoolFromRedis(): Promise<void> {
+  if (!redisEnabled()) return;
+  try {
+    const cached = await redisGetJson<DiscoveredSpot[]>("spots:warmpool");
+    if (Array.isArray(cached) && cached.length > 0) {
+      warmPool.push(...cached);
+      console.log(`[spots:discover] Loaded ${cached.length} warm spots from Redis`);
+    }
+  } catch {
+    /* best-effort; Redis read failure is silently ignored */
+  }
+}
+
+// Warm the generator + pool as soon as this module loads (server start).
+warmGenerator();
+void loadWarmPoolFromRedis();
+void refillWarmPool();
 
 export async function GET(req: Request) {
   // Kick off pool warming on the first request so subsequent visits are instant.
@@ -201,18 +266,20 @@ export async function GET(req: Request) {
       return NextResponse.json({ spot, totalAvailable: POOL.length, scoutedAt: new Date().toISOString(), warm: true });
     }
 
-    // 2) Cold path: enrich live (kick off a background refill for subsequent calls).
+    // 2) Cold path: generate + enrich live (and kick off a background refill).
     void refillWarmPool();
-    let pool = POOL;
-    if (category && category !== "all") {
-      const filtered = POOL.filter((s) => s.category === category);
-      if (filtered.length > 0) pool = filtered;
-    }
-    const candidates = pickCandidates(excludeIds).filter((c) => pool.includes(c));
-    for (const c of (candidates.length ? candidates : pickCandidates(excludeIds)).slice(0, 3)) {
+    const exKeys = new Set([...excludeIds].map((id) => id.replace(/^live-/, "")));
+    let candidates: (GeneratedPlace | PoolEntry)[] = await nextGeneratedPlaces(4, {
+      category: category || undefined,
+      exclude: exKeys,
+      signal: req.signal,
+    }).catch(() => []);
+    if (candidates.length === 0) candidates = fallbackCandidates(excludeIds);
+
+    for (const c of candidates.slice(0, 3)) {
       const spot = await liveSpot(c, req);
       if (spot) {
-        return NextResponse.json({ spot, totalAvailable: POOL.length, scoutedAt: new Date().toISOString(), warm: false });
+        return NextResponse.json({ spot, totalAvailable: 500, scoutedAt: new Date().toISOString(), warm: false });
       }
     }
     return NextResponse.json({ spot: WORLD_SPOTS_CATALOG[0], totalAvailable: POOL.length, scoutedAt: new Date().toISOString() });

@@ -62,3 +62,19 @@ export async function redisSetEx(key: string, value: string, ttlSeconds: number,
 export async function redisIncr(key: string, signal?: AbortSignal): Promise<number | null> {
   return command<number>(["INCR", key], signal);
 }
+
+/** SET a JSON value (serialized as string) with a TTL in seconds. */
+export async function redisSetJson<T>(key: string, value: T, ttlSeconds: number, signal?: AbortSignal): Promise<void> {
+  return redisSetEx(key, JSON.stringify(value), ttlSeconds, signal);
+}
+
+/** GET and deserialize a JSON value (returns null on miss / parse error). */
+export async function redisGetJson<T>(key: string, signal?: AbortSignal): Promise<T | null> {
+  const raw = await redisGet(key, signal);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}

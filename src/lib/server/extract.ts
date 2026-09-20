@@ -323,11 +323,19 @@ export type ExtractedExperience = z.infer<typeof ExperienceSchema>["experiences"
 export async function extractExperiences(
   destination: string,
   pages: CrawledPage[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priorities?: string[],
+  vibes?: string[]
 ): Promise<ExtractedExperience[]> {
   const corpus = pageCorpus(pages, 8);
+  const preferredVibes = [...(vibes || []), ...(priorities || [])].filter(Boolean);
+  const focus = preferredVibes.length
+    ? `\nTRAVELER PROFILE PRIORITIES & VIBE PASSIONS: ${preferredVibes.join(", ")}.
+STRONGLY prioritize and surface authentic experiences tailored to these exact passions (e.g. if cycling/bikepacking is listed, extract bike tours/rentals/trail expeditions; if photography is listed, extract golden hour photo walks/viewpoints; if cultural/heritage is listed, extract temple tours/artisan workshops; if food/wine is listed, extract culinary walks/tastings). In "whyRecommended", explicitly state why it matches their travel DNA.`
+    : "";
+
   const prompt = corpus
-    ? `DESTINATION: ${destination}
+    ? `DESTINATION: ${destination}${focus}
 Extract 4-8 BOOKABLE, single-session activities, entry tickets, and authentic experiences in ${destination} (e.g. monument entry passes, heritage walks, boat cruises, food tasting strolls, adventure sports).
 
 CRITICAL RULES:
@@ -348,7 +356,7 @@ Return JSON: { "experiences": [ ... ] }
 
 PAGES:
 ${corpus}`
-    : `DESTINATION: ${destination}
+    : `DESTINATION: ${destination}${focus}
 Provide 4-8 genuine, realistic single-session activities and entry passes in ${destination}.
 PRICING RULES:
 - Indian destinations: standard monument entries ₹50–₹300, guided walks ₹400–₹1,000, adventures ₹800–₹2,200 INR.

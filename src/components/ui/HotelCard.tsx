@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
 import type { HotelOption } from "@/lib/types";
@@ -59,42 +59,45 @@ export function HotelCard({
 
   const currentImg = hotel.images[activeImgIdx] || hotel.images[0];
   const youtubeVideoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${hotel.name} room tour review ${hotel.location}`)}`;
+  const fallbackHotelUrl = "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80";
+  const [imgSrc, setImgSrc] = useState(currentImg?.url || fallbackHotelUrl);
+
+  useEffect(() => {
+    setImgSrc(currentImg?.url || fallbackHotelUrl);
+  }, [currentImg?.url]);
 
   return (
     <motion.div
       layout
       className={cx(
-        "overflow-hidden rounded-2xl border transition-all duration-300",
+        "group relative overflow-hidden rounded-3xl border bg-card transition-all duration-300 shadow-card",
         selected
-          ? "border-emerald-500 bg-gradient-to-b from-emerald-500/[0.04] to-card shadow-lift ring-2 ring-emerald-500/25"
-          : "border-line bg-card shadow-card hover:border-brand/50 hover:shadow-lift"
+          ? "border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-500/[0.02]"
+          : "border-line hover:border-brand/50 hover:shadow-lift"
       )}
     >
-      <div className="grid gap-0 md:grid-cols-[320px_1fr]">
-        {/* Photo preview container */}
+      <div className="grid md:grid-cols-[280px_1fr]">
+        {/* Gallery / Cover */}
         <div className="relative flex flex-col bg-paper-2 border-b md:border-b-0 md:border-r border-line">
           <button
             className="relative aspect-[4/3] w-full overflow-hidden bg-paper-3 md:aspect-auto md:h-56 cursor-zoom-in"
-            onClick={() => currentImg?.url && lightbox.open(hotel.images, activeImgIdx, hotel.name)}
+            onClick={() => lightbox.open(hotel.images.length > 0 ? hotel.images : [{ id: `fallback_${hotel.id}`, url: imgSrc, category: "room", credit: "Travelism", provenance: "editorial" }], activeImgIdx, hotel.name)}
             title="Click to view full screen photos"
           >
-            {currentImg?.url ? (
-              <>
-                <Image
-                  src={currentImg.url}
-                  alt={hotel.name}
-                  fill
-                  sizes="(max-width: 768px) 100vw, 320px"
-                  className="object-cover transition-transform duration-500 hover:scale-105"
-                  unoptimized
-                />
-                <span className="absolute bottom-2 right-2 rounded-full bg-black/75 px-2.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-md">
-                  📷 {activeImgIdx + 1}/{hotel.images.length || 1}
-                </span>
-              </>
-            ) : (
-              <div className="grid h-full place-items-center text-3xl">🏨</div>
-            )}
+            <Image
+              src={imgSrc}
+              alt={hotel.name}
+              fill
+              sizes="(max-width: 768px) 100vw, 320px"
+              className="object-cover transition-transform duration-500 hover:scale-105"
+              onError={() => {
+                if (imgSrc !== fallbackHotelUrl) setImgSrc(fallbackHotelUrl);
+              }}
+              unoptimized
+            />
+            <span className="absolute bottom-2 right-2 rounded-full bg-black/75 px-2.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-md">
+              📷 {activeImgIdx + 1}/{hotel.images.length || 1}
+            </span>
 
             {selected && (
               <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow-md backdrop-blur-md">

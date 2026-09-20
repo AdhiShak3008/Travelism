@@ -9,6 +9,7 @@ import { StageProgress } from "@/components/ui/StageProgress";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
 import { AuthPage } from "@/components/ui/AuthPage";
+import { FloatingConcierge } from "@/components/ui/FloatingConcierge";
 import { SavedTripsDrawer } from "@/components/ui/SavedTripsDrawer";
 import { PreferencesPage } from "@/components/ui/PreferencesPage";
 import { useAuth } from "@/store/authStore";
@@ -118,6 +119,10 @@ export function Flow() {
           {stage === "checkout" && <CheckoutStage />}
           {stage === "trip" && <TripModeStage />}
         </motion.main>
+
+        {/* Always-visible AI Concierge (desktop). Shown once a trip exists so
+            the user can edit any section instantly from anywhere on the page. */}
+        {["package", "refine", "cost", "checkout", "trip"].includes(stage) && <FloatingConcierge />}
       </div>
     </LightboxProvider>
   );

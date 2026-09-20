@@ -75,6 +75,7 @@ export interface ProfileHints {
   dietary?: string[];
   stayMode?: string;
   currency?: string;
+  vibes?: string[];
 }
 
 export async function investigate(
@@ -437,6 +438,10 @@ export async function investigate(
     // Fan out discovery and extractions across all destination hubs in parallel
     const hubData = await Promise.all(
       destinations.map(async (hub) => {
+        const vibeKeywords = (profileHints?.vibes || []).map((v) => v.replace(/[^\w\s]/g, "").trim()).filter(Boolean).slice(0, 3).join(" ");
+        const hubActQuery = vibeKeywords
+          ? `${hub} ${vibeKeywords} top things to do activities tours`
+          : `${hub} top things to do adventures tours outdoor activities`;
         const hubHotelQuery = isOutdoorStay
           ? `campsites wild camping mountain huts in ${hub}`
           : `best clean hotels in ${hub} reviews price`;
@@ -444,14 +449,14 @@ export async function investigate(
           discoverAndCrawl(`${hub} travel guide top attractions places to visit itinerary`, 4),
           discoverAndCrawl(hubHotelQuery, 5),
           discoverAndCrawl(`${hub} best local restaurants authentic food specialties dining`, 4),
-          discoverAndCrawl(`${hub} top things to do adventures tours outdoor activities`, 4),
+          discoverAndCrawl(hubActQuery, 4),
         ]);
 
         const [pl, ht, fd, ex] = await Promise.all([
           withTimeout(extractPlaces(hub, gPages, signal).catch(() => []), 14000, []),
           withTimeout(extractHotels(hub, intent.priorities, sPages, signal).catch(() => []), 14000, []),
           withTimeout(extractFood(hub, fPages, signal, intent.dietary).catch(() => []), 10000, []),
-          withTimeout(extractExperiences(hub, aPages, signal).catch(() => []), 10000, []),
+          withTimeout(extractExperiences(hub, aPages, signal, intent.priorities, profileHints?.vibes).catch(() => []), 10000, []),
         ]);
 
         const finalPlaces = (pl.length > 0 ? pl : getGuaranteedCuratedPlaces(hub)).slice(0, 5).map((p) => ({ ...p, location: hub }));
@@ -493,11 +498,16 @@ export async function investigate(
       ? `campsites wild camping mountain huts homestays in ${stayLocus}`
       : `best clean hotels in ${stayLocus} reviews price`;
 
+    const vibeKeywords = (profileHints?.vibes || []).map((v) => v.replace(/[^\w\s]/g, "").trim()).filter(Boolean).slice(0, 3).join(" ");
+    const activityQuery = vibeKeywords
+      ? `${dest} ${vibeKeywords} top things to do activities tours guide`
+      : `${dest} top things to do adventures tours outdoor activities permits entry fee ticket price`;
+
     const [gPages, sPages, fPages, aPages] = await Promise.all([
       discoverAndCrawl(`${dest} travel guide top attractions places to visit itinerary`, 6),
       discoverAndCrawl(hotelQuery, 6),
       discoverAndCrawl(`${dest} best local restaurants authentic food specialties cafes dining`, 6),
-      discoverAndCrawl(`${dest} top things to do adventures tours outdoor activities permits entry fee ticket price`, 6),
+      discoverAndCrawl(activityQuery, 6),
     ]);
 
     guidePages = gPages;
@@ -516,7 +526,7 @@ export async function investigate(
       withTimeout(extractHotels(dest, intent.priorities, hotelPages, signal).catch(() => []), 10000, []),
       withTimeout(extractFood(dest, foodPages, signal, intent.dietary).catch(() => []), 10000, []),
       withTimeout(extractPermits(dest, permitPages, signal).catch(() => []), 10000, []),
-      withTimeout(extractExperiences(dest, experiencePages, signal).catch(() => []), 10000, []),
+      withTimeout(extractExperiences(dest, experiencePages, signal, intent.priorities, profileHints?.vibes).catch(() => []), 10000, []),
     ]);
 
     overview = ov;
@@ -596,9 +606,12 @@ export async function investigate(
       const healedWiki = await healCandidateImages(wiki, p.name, p.location || dest, "attraction", signal);
       // Dedup and keep official Places photos first.
       const seenP = new Set<string>();
-      const placeImages = [...placePhotos, ...healedWiki]
+      let placeImages = [...placePhotos, ...healedWiki]
         .filter((im) => (seenP.has(im.url) ? false : (seenP.add(im.url), true)))
         .slice(0, 5);
+      if (placeImages.length === 0) {
+        placeImages = [getCuratedPlaceImage(p.name, p.location || dest, p.category)];
+      }
       return {
         id: `place_${i}_${destinationKey(p.name)}`,
         canonicalName: p.name,
@@ -630,10 +643,7 @@ export async function investigate(
   );
 
   // ---- IMAGE BACKFILL ----
-  // Some places come back image-less not because no verified photo exists, but
-  // because their scrape got cut off under the concurrent first pass. Retry ONLY
-  // the empty ones, serially with a generous budget, so well-known landmarks
-  // (e.g. Colosseum) reliably get their subject-locked photo instead of a blank.
+  // Ensure every single place has verified/scraped photography, or curated high-res visual fallback
   const missing = places.filter((p) => p.images.length === 0);
   if (missing.length > 0) {
     await mapLimited(missing, 3, async (p) => {
@@ -648,9 +658,11 @@ export async function investigate(
         if (healed.length > 0) {
           healed.forEach((im) => usedImageUrls.add(im.url));
           p.images = healed.slice(0, 4);
+        } else {
+          p.images = [getCuratedPlaceImage(p.canonicalName, p.location || dest, p.category)];
         }
       } catch {
-        /* leave as clean placeholder */
+        p.images = [getCuratedPlaceImage(p.canonicalName, p.location || dest, p.category)];
       }
     });
   }

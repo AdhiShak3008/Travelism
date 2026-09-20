@@ -228,44 +228,70 @@ export function ShapeStage() {
       </div>
 
       {/* Travelers Card */}
-      <div className="card mt-6 p-6 shadow-card">
+      <div className={cx(
+        "card mt-6 p-6 shadow-card transition-all duration-300",
+        blob.travelers === 0 && "border-amber-500/70 ring-2 ring-amber-500/20 bg-amber-500/[0.03]"
+      )}>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="label-eyebrow mb-1">Travel Party</div>
-            <div className="display text-2xl font-bold text-ink">
-              {blob.travelers} {blob.travelers > 1 ? "Travelers" : "Solo Traveler"}
+            <div className="label-eyebrow mb-1 flex items-center gap-1.5">
+              <span>Travel Party</span>
+              {blob.travelers === 0 && (
+                <span className="rounded-full bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 animate-pulse">
+                  Action Required
+                </span>
+              )}
             </div>
-            <p className="text-xs text-ink-faint mt-0.5">
-              Flight fares, hotel rooms (1 room per 2 guests), and tickets scale automatically.
-            </p>
+            <div className="display text-2xl font-bold text-ink flex items-center gap-2">
+              {blob.travelers === 0 ? (
+                <span className="text-amber-600 dark:text-amber-400">0 Travelers (Party size unconfirmed)</span>
+              ) : (
+                <span>{blob.travelers} {blob.travelers > 1 ? "Travelers" : "Solo Traveler"}</span>
+              )}
+            </div>
+            {blob.travelers === 0 ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-1">
+                ⚠️ Default is 0. Please select your party size below so flights, hotel rooms, and package rates scale accurately.
+              </p>
+            ) : (
+              <p className="text-xs text-ink-faint mt-0.5">
+                Flight fares, hotel rooms (1 room per 2 guests), and tickets scale automatically.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setTravelers(Math.max(1, blob.travelers - 1))}
+              onClick={() => setTravelers(Math.max(0, blob.travelers - 1))}
               className="grid h-11 w-11 place-items-center rounded-full border border-line text-xl font-bold text-ink hover:bg-paper-2 transition active:scale-90 shadow-sm"
+              title="Decrease traveler count"
             >
               −
             </button>
-            <span className="w-10 text-center font-bold text-xl text-ink">{blob.travelers}</span>
+            <span className={cx("w-10 text-center font-bold text-xl", blob.travelers === 0 ? "text-amber-600 dark:text-amber-400" : "text-ink")}>
+              {blob.travelers}
+            </span>
             <button
               onClick={() => setTravelers(Math.min(20, blob.travelers + 1))}
               className="grid h-11 w-11 place-items-center rounded-full border border-line text-xl font-bold text-ink hover:bg-paper-2 transition active:scale-90 shadow-sm"
+              title="Increase traveler count"
             >
               +
             </button>
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-1.5 pt-3 border-t border-line/60">
+        <div className="mt-4 flex flex-wrap items-center gap-2 pt-3 border-t border-line/60">
+          <span className="text-xs font-semibold text-ink-soft mr-1">Quick Select:</span>
           {TRAVELER_PRESETS.map((p) => (
             <button
               key={p.count}
               onClick={() => setTravelers(p.count)}
-              className={
+              className={cx(
+                "rounded-full px-3.5 py-1.5 text-xs font-bold transition shadow-sm",
                 blob.travelers === p.count
-                  ? "rounded-full bg-brand px-3.5 py-1.5 text-xs font-bold text-paper shadow-sm"
-                  : "rounded-full border border-line bg-paper-2 px-3.5 py-1.5 text-xs font-medium text-ink-soft hover:text-ink hover:bg-paper-3 transition"
-              }
+                  ? "bg-brand text-paper ring-2 ring-brand/30"
+                  : "border border-line bg-paper-2 text-ink-soft hover:text-ink hover:bg-paper-3"
+              )}
             >
               {p.label}
             </button>

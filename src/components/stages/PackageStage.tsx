@@ -15,9 +15,9 @@ import { CostPanel } from "@/components/ui/CostPanel";
 import { JourneyRibbon } from "@/components/ui/JourneyRibbon";
 import { ItineraryView } from "@/components/ui/ItineraryView";
 import { InteractiveMapView } from "@/components/ui/InteractiveMapView";
-import { ModifyChat } from "@/components/ui/ModifyChat";
 import { SectionTitle } from "@/components/ui/Primitives";
 import { LangGraphTelemetry } from "@/components/ui/LangGraphTelemetry";
+import { ConciergeCommandBar } from "@/components/ui/ConciergeCommandBar";
 
 type Tab = "overview" | "itinerary" | "map" | "stays" | "flights" | "todo" | "transport" | "food" | "permits";
 
@@ -40,6 +40,8 @@ export function PackageStage() {
   const chooseFlight = useTrip((s) => s.chooseFlight);
   const chooseHotel = useTrip((s) => s.chooseHotel);
   const setStayMode = useTrip((s) => s.setStayMode);
+  const setTravelers = useTrip((s) => s.setTravelers);
+  const openConcierge = useTrip((s) => s.openConcierge);
   const [tab, setTab] = useState<Tab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
   const [hotelSearch, setHotelSearch] = useState<string>("");
@@ -158,7 +160,13 @@ Generated with Travelism 2.0`;
                 <span className="text-ink-faint">·</span>
                 <span>{blob.durationDays} Days ({Math.max(1, blob.durationDays - 1)} Nights)</span>
                 <span className="text-ink-faint">·</span>
-                <span>{blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""}</span>
+                {blob.travelers === 0 ? (
+                  <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                    ⚠️ 0 Travelers (Unconfirmed)
+                  </span>
+                ) : (
+                  <span>{blob.travelers} Traveler{blob.travelers > 1 ? "s" : ""}</span>
+                )}
                 <span className="text-ink-faint">·</span>
                 <span>From {blob.origin || "Your City"}</span>
                 <span className="text-ink-faint">·</span>
@@ -172,9 +180,15 @@ Generated with Travelism 2.0`;
                   Complete Package Total
                 </div>
                 <div className="display text-3xl sm:text-4xl font-extrabold text-ink">{inr(total)}</div>
-                <div className="text-sm font-semibold text-brand mt-0.5">
-                  {inr(Math.round(total / (blob.travelers || 1)))} / person all-inclusive
-                </div>
+                {blob.travelers === 0 ? (
+                  <div className="text-xs font-semibold text-amber-500 mt-0.5">
+                    Estimated total · Select travelers to see per-person
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-brand mt-0.5">
+                    {inr(Math.round(total / blob.travelers))} / person all-inclusive
+                  </div>
+                )}
               </div>
 
               {/* Action buttons */}
@@ -197,6 +211,48 @@ Generated with Travelism 2.0`;
             </div>
           </div>
 
+          {blob.travelers === 0 && (
+            <div className="mt-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">⚠️</span>
+                  <div>
+                    <div className="text-sm font-bold text-ink">Travel party size has not been confirmed yet</div>
+                    <div className="text-xs text-ink-soft">
+                      Set your party size so hotel room count, transit seats, and per-person cost calculations are locked in.
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setTravelers(1)}
+                    className="rounded-xl border border-line bg-paper px-3 py-1.5 text-xs font-bold text-ink hover:border-brand transition shadow-xs"
+                  >
+                    1 Solo
+                  </button>
+                  <button
+                    onClick={() => setTravelers(2)}
+                    className="rounded-xl border border-line bg-paper px-3 py-1.5 text-xs font-bold text-ink hover:border-brand transition shadow-xs"
+                  >
+                    2 Couple
+                  </button>
+                  <button
+                    onClick={() => setTravelers(4)}
+                    className="rounded-xl border border-line bg-paper px-3 py-1.5 text-xs font-bold text-ink hover:border-brand transition shadow-xs"
+                  >
+                    4 Family
+                  </button>
+                  <button
+                    onClick={() => setTravelers(6)}
+                    className="rounded-xl border border-line bg-paper px-3 py-1.5 text-xs font-bold text-ink hover:border-brand transition shadow-xs"
+                  >
+                    6 Group
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 border-t border-dashed border-line-strong pt-5">
             <div className="label-eyebrow mb-2">The Journey Flow</div>
             <JourneyRibbon />
@@ -215,6 +271,11 @@ Generated with Travelism 2.0`;
       {/* LangGraph Stateful Multi-Agent Telemetry & Orchestrator */}
       <div className="mt-6">
         <LangGraphTelemetry />
+      </div>
+
+      {/* AI Concierge Embedded Command Bar with 1-Click Superpower Chips */}
+      <div className="mt-6">
+        <ConciergeCommandBar />
       </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_380px] w-full min-w-0">
@@ -445,11 +506,21 @@ Generated with Travelism 2.0`;
           {/* TAB 2: ITINERARY */}
           {tab === "itinerary" && (
             <div>
-              <SectionTitle
-                eyebrow="Complete Schedule"
-                title={`${blob.durationDays}-Day Harmonious Itinerary`}
-                hint="Tailored to your vacation length with balanced sightseeing, experiences, meals, and leisure. Click any day's focus pills to dictate your pace or add custom activities."
-              />
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <SectionTitle
+                  eyebrow="Complete Schedule"
+                  title={`${blob.durationDays}-Day Harmonious Itinerary`}
+                  hint="Tailored to your vacation length with balanced sightseeing, experiences, meals, and leisure. Click any day's focus pills to dictate your pace or add custom activities."
+                />
+                <button
+                  onClick={() => openConcierge("Audit my current itinerary, travel pace, and daily stops — what am I missing or what can be improved?")}
+                  className="rounded-full border border-brand/40 bg-brand/10 hover:bg-brand/20 px-3.5 py-1.5 text-xs font-bold text-brand transition shadow-2xs flex items-center gap-1.5"
+                  title="Ask AI Concierge to perform an in-depth audit of your itinerary gaps, pace, and timing"
+                >
+                  <span>🔍</span>
+                  <span>Audit Gaps & Pace</span>
+                </button>
+              </div>
               <div className="mt-5">
                 <ItineraryView days={blob.itinerary} />
               </div>
@@ -481,6 +552,14 @@ Generated with Travelism 2.0`;
                   title={`Choose Your Preferred Stay (${dataset.hotels.length} Options)`}
                   hint="All stays include verified cleanliness scores, bathroom checks, and authentic amenities. Tap 'Choose This Stay' to update your package in real-time."
                 />
+                <button
+                  onClick={() => openConcierge("Can you find authentic, cheaper local homestays or budget stays for this trip?")}
+                  className="rounded-full border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-3.5 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 transition shadow-2xs flex items-center gap-1.5"
+                  title="Ask AI Concierge to search and recommend authentic local homestays"
+                >
+                  <span>🏡</span>
+                  <span>Ask AI for Homestays</span>
+                </button>
               </div>
 
               {/* Multi-Destination Hub Selector Dropdown & Tabs */}
@@ -938,20 +1017,67 @@ Generated with Travelism 2.0`;
           {/* TAB 8: PERMITS */}
           {tab === "permits" && (
             <div className="space-y-4">
-              <SectionTitle eyebrow="Entry & Documents" title="Visas, Permits & Entry Formalities" />
-              {blob.permits.map((p) => (
-                <PermitCard key={p.id} permit={p} />
-              ))}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <SectionTitle eyebrow="Entry & Documents" title="Visas, Permits & Entry Formalities" />
+                <button
+                  onClick={() => openConcierge("Are there any permits, visas, or special documents required for this trip?")}
+                  className="rounded-full border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 px-3.5 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 transition shadow-2xs flex items-center gap-1.5"
+                  title="Ask AI Concierge for full permit breakdown"
+                >
+                  <span>📜</span>
+                  <span>Ask Concierge for Permit Guide</span>
+                </button>
+              </div>
+
+              {blob.permits.length === 0 ? (
+                <div className="rounded-2xl border border-line bg-card p-6 text-center">
+                  <span className="text-3xl">🛂</span>
+                  <h4 className="mt-2 font-bold text-ink">No Standard Permits Flagged by Default</h4>
+                  <p className="text-xs text-ink-soft mt-1 max-w-md mx-auto">
+                    Certain remote regions or foreign citizenships may require Inner Line Permits or special restricted zone passes.
+                  </p>
+                  <button
+                    onClick={() => openConcierge("Are there any permits, visas, or special documents required for this trip?")}
+                    className="mt-3 btn-primary !text-xs !py-2 !px-4 font-bold"
+                  >
+                    Run Permit & Visa Verification with AI Concierge →
+                  </button>
+                </div>
+              ) : (
+                blob.permits.map((p) => (
+                  <PermitCard key={p.id} permit={p} />
+                ))
+              )}
+
+              {/* AI Permit Consultation Callout */}
+              <div className="rounded-2xl border border-brand/25 bg-gradient-to-r from-brand/5 via-paper to-amber-500/5 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+                <div className="flex items-center gap-3.5">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-500/15 text-amber-600 text-xl font-bold">
+                    📜
+                  </div>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-ink">
+                      Need documentation assistance for your specific nationality or vehicle?
+                    </h4>
+                    <p className="text-[11px] text-ink-soft mt-0.5">
+                      The AI Concierge provides step-by-step guidance on self-drive rules, camera permits, and protected area approvals.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => openConcierge("Check all visa, vehicle permit, and photography rules for my trip")}
+                  className="btn-primary !text-xs !py-2 !px-4 font-bold shrink-0"
+                >
+                  Ask Concierge →
+                </button>
+              </div>
             </div>
           )}
         </div>
 
-        {/* SIDEBAR: Cost Panel + AI Concierge */}
+        {/* SIDEBAR: Cost Panel (AI Concierge is a floating always-on panel now) */}
         <div className="space-y-6 lg:sticky lg:top-6 lg:self-start w-full min-w-0 max-w-full">
           <CostPanel />
-          <div className="h-[560px] w-full min-w-0">
-            <ModifyChat />
-          </div>
           <button
             onClick={() => setStage("checkout")}
             className="btn-primary w-full !py-4 text-base shadow-lift font-bold hover:brightness-110"

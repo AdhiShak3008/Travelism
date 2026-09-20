@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth, type TravelPreferences } from "@/store/authStore";
 import { useTrip } from "@/store/tripStore";
@@ -98,6 +98,21 @@ export function PreferencesPage() {
   );
 
   const [savedToast, setSavedToast] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Synchronize form state whenever the preferences drawer opens or user preferences update
+  useEffect(() => {
+    if (user?.preferences) {
+      setCurrency(user.preferences.currency || "INR");
+      setBudgetTier(user.preferences.budgetTier || "balanced");
+      setTravelPace(user.preferences.travelPace || "balanced");
+      setStayModeLocal(user.preferences.stayMode || "hotels");
+      setDietary(user.preferences.dietary || ["Vegetarian Friendly"]);
+      setVibePriorities(user.preferences.vibePriorities || ["Mountain Passes & Lakes", "Golden Hour & Photography"]);
+      setFlightPreferences(user.preferences.flightPreferences || ["Avoid early mornings (<8 AM)"]);
+      setAccessibilityNeeds(user.preferences.accessibilityNeeds || []);
+    }
+  }, [isPreferencesOpen, user?.preferences]);
 
   if (!isPreferencesOpen) return null;
 
@@ -109,29 +124,37 @@ export function PreferencesPage() {
     }
   };
 
-  const handleSave = () => {
-    const updated: TravelPreferences = {
-      currency,
-      budgetTier,
-      travelPace,
-      stayMode,
-      dietary,
-      vibePriorities,
-      flightPreferences,
-      accessibilityNeeds,
-    };
+  const handleSave = async () => {
+    if (isSaving) return; // Prevent double-click
+    setIsSaving(true);
 
-    updatePreferences(updated);
+    try {
+      const updated: TravelPreferences = {
+        currency,
+        budgetTier,
+        travelPace,
+        stayMode,
+        dietary,
+        vibePriorities,
+        flightPreferences,
+        accessibilityNeeds,
+      };
 
-    // Also synchronize to active trip store
-    setStayMode(stayMode);
-    setPace(travelPace);
+      updatePreferences(updated);
 
-    setSavedToast(true);
-    setTimeout(() => {
-      setSavedToast(false);
-      closePreferences();
-    }, 1200);
+      // Also synchronize to active trip store
+      setStayMode(stayMode);
+      setPace(travelPace);
+
+      setSavedToast(true);
+      setTimeout(() => {
+        setSavedToast(false);
+        closePreferences();
+      }, 1500);
+    } catch (err) {
+      console.error("Failed to save preferences:", err);
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -163,9 +186,10 @@ export function PreferencesPage() {
 
             <button
               onClick={handleSave}
-              className="btn-primary !px-5 !py-1.5 text-xs font-extrabold shadow-md active:scale-95 transition"
+              disabled={isSaving}
+              className="btn-primary !px-5 !py-1.5 text-xs font-extrabold shadow-md active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              💾 Save Profile
+              {isSaving ? "💾 Saving..." : "💾 Save Profile"}
             </button>
           </div>
         </header>
@@ -439,10 +463,11 @@ export function PreferencesPage() {
             </button>
             <button
               onClick={handleSave}
-              className="btn-primary !px-8 !py-3 text-sm font-extrabold shadow-lift"
+              disabled={isSaving}
+              className="btn-primary !px-8 !py-3 text-sm font-extrabold shadow-lift disabled:opacity-60 disabled:cursor-not-allowed transition"
             >
-              <span>Save & Apply to Swarm</span>
-              <span className="ml-1.5">✓</span>
+              <span>{isSaving ? "Saving..." : "Save & Apply to Swarm"}</span>
+              <span className="ml-1.5">{isSaving ? "⏳" : "✓"}</span>
             </button>
           </div>
         </main>
@@ -451,12 +476,12 @@ export function PreferencesPage() {
         <AnimatePresence>
           {savedToast && (
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="fixed bottom-6 inset-x-0 mx-auto w-fit z-50 flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-2xl"
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: -20 }}
+              className="fixed top-1/2 left-1/2 z-[60] -translate-x-1/2 -translate-y-1/2 flex items-center gap-3 rounded-2xl border-2 border-emerald-500/60 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 px-8 py-4 text-sm font-bold text-white shadow-2xl"
             >
-              <span>✓</span>
+              <span className="text-xl">✓</span>
               <span>Travel Preferences Saved & Synchronized!</span>
             </motion.div>
           )}

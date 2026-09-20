@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { chatJSON, type ChatMsg } from "@/lib/server/groq";
+import { chat, chatJSON, type ChatMsg } from "@/lib/server/groq";
 import { ENV } from "@/lib/server/env";
 import type { TravelerMemory } from "@/lib/types";
 import { formatTravelerMemoryForPrompt } from "@/lib/memory";
@@ -9,86 +9,79 @@ import { arbitrateConciergeFactCheck } from "@/lib/server/middleman";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const ChatResponseSchema = z.object({
-  reply: z.string(),
-  action: z
+const SingleActionSchema = z.object({
+  kind: z.string().nullish(),
+  action: z.string().nullish(),
+  value: z.union([z.number(), z.string()]).nullish(),
+  targetHotelId: z.string().nullish(),
+  targetHotelName: z.string().nullish(),
+  dayNum: z.union([z.number(), z.string()]).nullish(),
+  day: z.union([z.number(), z.string()]).nullish(),
+  dayTitle: z.string().nullish(),
+  stops: z
+    .array(
+      z.object({
+        kind: z.enum(["visit", "meal", "travel", "rest", "hotel"]).catch("visit"),
+        label: z.string().catch("Scheduled Stop"),
+        start: z.string().catch("10:00"),
+        end: z.string().catch("12:00"),
+        note: z.string().nullish(),
+      })
+    )
+    .nullish(),
+  stop: z
     .object({
-      kind: z.enum([
-        "upgrade_hotel",
-        "cheaper_hotel",
-        "search_new_hotels",
-        "search_new_places",
-        "set_stay_mode",
-        "remove_all_hotels",
-        "set_duration",
-        "add_days",
-        "set_travelers",
-        "set_pace",
-        "budget_target",
-        "add_activity",
-        "remove_activity",
-        "replace_day_stops",
-        "add_day_stop",
-        "remove_day_stop",
-        "set_day_focus",
-        "none",
-      ]),
-      value: z.union([z.number(), z.string()]).nullable().optional(),
-      dayNum: z.number().nullable().optional(),
-      dayTitle: z.string().nullable().optional(),
-      stops: z
-        .array(
-          z.object({
-            kind: z.enum(["visit", "meal", "travel", "rest", "hotel"]).catch("visit"),
-            label: z.string(),
-            start: z.string().catch("10:00"),
-            end: z.string().catch("12:00"),
-            note: z.string().nullable().optional(),
-          })
-        )
-        .nullable()
-        .optional(),
-      stop: z
-        .object({
-          kind: z.enum(["visit", "meal", "travel", "rest", "hotel"]).catch("visit"),
-          label: z.string(),
-          start: z.string().catch("10:00"),
-          end: z.string().catch("12:00"),
-          note: z.string().nullable().optional(),
-        })
-        .nullable()
-        .optional(),
-      activityData: z
-        .object({
-          name: z.string(),
-          category: z.string().nullable().optional(),
-          price: z.number().nullable().optional(),
-          blurb: z.string().nullable().optional(),
-          durationHours: z.number().nullable().optional(),
-        })
-        .nullable()
-        .optional(),
-      deltaLabel: z.string().nullable().optional(),
+      kind: z.enum(["visit", "meal", "travel", "rest", "hotel"]).catch("visit"),
+      label: z.string().catch("Scheduled Stop"),
+      start: z.string().catch("10:00"),
+      end: z.string().catch("12:00"),
+      note: z.string().nullish(),
     })
-    .nullable()
-    .optional(),
-  memoryDelta: z
+    .nullish(),
+  activityData: z
     .object({
-      learnedFacts: z.array(z.string()).optional(),
-      dietary: z.array(z.string()).optional(),
-      vibes: z.array(z.string()).optional(),
-      style: z.array(z.string()).optional(),
-      pacing: z.array(z.string()).optional(),
-      budget: z.array(z.string()).optional(),
-      companionship: z.array(z.string()).optional(),
-      pastDecisions: z.array(z.string()).optional(),
-      keyNotes: z.array(z.string()).optional(),
+      name: z.string().catch("Custom Activity"),
+      category: z.string().nullish(),
+      price: z.union([z.number(), z.string()]).nullish(),
+      blurb: z.string().nullish(),
+      durationHours: z.union([z.number(), z.string()]).nullish(),
+      day: z.union([z.number(), z.string()]).nullish(),
+      startTime: z.string().nullish(),
+      endTime: z.string().nullish(),
     })
-    .nullable()
-    .optional(),
+    .nullish(),
+  deltaLabel: z.string().nullish(),
 });
 
+const ChatResponseSchema = z.object({
+  reply: z.string().nullish(),
+  response: z.string().nullish(),
+  answer: z.string().nullish(),
+  content: z.string().nullish(),
+  explanation: z.string().nullish(),
+  message: z.string().nullish(),
+  text: z.string().nullish(),
+  action: SingleActionSchema.nullish(),
+  actions: z.array(SingleActionSchema).nullish(),
+  memoryDelta: z
+    .object({
+      learnedFacts: z.array(z.string()).nullish(),
+      dietary: z.array(z.string()).nullish(),
+      vibes: z.array(z.string()).nullish(),
+      interests: z.array(z.string()).nullish(),
+      style: z.array(z.string()).nullish(),
+      pacing: z.array(z.string()).nullish(),
+      budget: z.array(z.string()).nullish(),
+      companionship: z.array(z.string()).nullish(),
+      pastDecisions: z.array(z.string()).nullish(),
+      keyNotes: z.array(z.string()).nullish(),
+      preferences: z.any().nullish(),
+    })
+    .nullish(),
+}).passthrough();
+
 export async function POST(req: NextRequest) {
+  let chatMessages: ChatMsg[] = [];
   try {
     const body = await req.json().catch(() => ({}));
     const { message, history, travelerMemory, tripContext } = body as {
@@ -102,12 +95,23 @@ export async function POST(req: NextRequest) {
         origin?: string;
         hotelName?: string;
         hotelPrice?: number;
+        hotelPriceFormatted?: string;
+        stayMode?: string;
+        budgetTier?: string;
+        travelPace?: string;
+        currency?: string;
         flightAirline?: string;
         flightDuration?: string;
         experiences?: string[];
         places?: string[];
+        candidateHotels?: Array<{ id: string; name: string; pricePerNight: number; priceFormatted?: string; category?: string; cleanliness?: number; location?: string }>;
+        candidatePlaces?: string[];
+        permits?: Array<{ name: string; requiredFor?: string; requirement?: string; estimatedCost?: number; estimatedCostFormatted?: string; processingTime?: string; process?: string; authority?: string; notes?: string; whyNeeded?: string }>;
+        conflicts?: Array<{ type?: string; title?: string; attribute?: string; severity?: string; resolution?: string; recommendation?: string; description?: string }>;
         itinerary?: { day: number; title: string; isRestDay?: boolean; stops: string[] }[];
         totalCost?: number;
+        totalCostFormatted?: string;
+        dietary?: string[];
       };
     };
 
@@ -118,7 +122,7 @@ export async function POST(req: NextRequest) {
     if (!ENV.GROQ_API_KEY) {
       return json(
         {
-          reply: `I've noted your request: "${message}". I can adjust your hotel, vacation duration, travelers count, or budget anytime.`,
+          reply: `I've noted your request: "${message}". I can adjust your stays, vacation duration, activities, pace, or budget anytime.`,
           action: { kind: "none" },
         },
         200
@@ -127,13 +131,36 @@ export async function POST(req: NextRequest) {
 
     const dest = tripContext?.destinationName || "your destination";
     const days = tripContext?.durationDays || 7;
-    const travelers = tripContext?.travelers || 2;
+    const travelers = typeof tripContext?.travelers === "number" ? tripContext.travelers : 0;
     const origin = tripContext?.origin || "your departure city";
-    const hotel = tripContext?.hotelName ? `${tripContext.hotelName} (₹${tripContext.hotelPrice?.toLocaleString("en-IN")}/night)` : "Selected Stay";
-    const flight = tripContext?.flightAirline ? `${tripContext.flightAirline} (${tripContext.flightDuration})` : "Selected Flight";
+    const currency = tripContext?.currency || "EUR";
+    const hotel = tripContext?.hotelName
+      ? `${tripContext.hotelName} (${tripContext.hotelPriceFormatted || "Selected Stay"})`
+      : "Selected Stay";
+    const flight = tripContext?.flightAirline
+      ? `${tripContext.flightAirline} (${tripContext.flightDuration || "Direct/Transit"})`
+      : "Selected Flight";
+    const stayMode = tripContext?.stayMode || "hotels";
     const exps = (tripContext?.experiences ?? []).join(", ") || "None yet";
-    const places = (tripContext?.places ?? []).join(", ") || "Various spots";
-    const total = tripContext?.totalCost ? `₹${Math.round(tripContext.totalCost).toLocaleString("en-IN")}` : "calculated";
+    const places = (tripContext?.places ?? []).join(", ") || "Various highlights";
+    const total = (tripContext as any)?.totalCostFormatted || (tripContext?.totalCost ? `${currency} ${Math.round(tripContext.totalCost).toLocaleString()}` : "calculated");
+
+    // Candidate Stays Catalog - strictly formatted in the traveler's active currency
+    const staysCatalog = (tripContext?.candidateHotels ?? [])
+      .slice(0, 15)
+      .map((h) => `- [ID: ${h.id}] **${h.name}** (${h.category || "stay"}): ${(h as any).priceFormatted || `${currency} ${h.pricePerNight}`}/night · Clean ${h.cleanliness || 8.5}/10 · ${h.location || dest}`)
+      .join("\n");
+
+    // Permits Registry - formatted in the traveler's active currency
+    const permitsCatalog = (tripContext?.permits ?? [])
+      .map((p) => `- **${p.name}**: ${(p as any).requirement || p.whyNeeded || p.notes || "Official permit required"} · Fee: ${(p as any).estimatedCostFormatted || `${currency} ${p.estimatedCost || 0}`} · Processing: ${p.processingTime || (p as any).process || "1-3 days"}`)
+      .join("\n");
+
+    // Advisories & Conflicts
+    const conflictsCatalog = (tripContext?.conflicts ?? [])
+      .map((c) => `- ⚠️ **${c.title || c.type || (c as any).attribute}**: ${c.description || c.resolution || (c as any).recommendation || "Advisory flagged"}`)
+      .join("\n");
+
     const itinSummary = (tripContext?.itinerary ?? [])
       .slice(0, 10)
       .map((d) => `Day ${d.day} (${d.title}): ${d.stops.join("; ")}`)
@@ -145,89 +172,83 @@ export async function POST(req: NextRequest) {
       ? `\n\n🛡️ MIDDLEMAN ARBITER FACT-CHECK ENFORCEMENT:\n${middlemanCheck.advisoryMarkdown}\nYou MUST incorporate this critical local advisory/closure into your answer!`
       : "";
 
-    const systemPrompt = `You are the Travelism AI Concierge, an elite, warm, ultra-knowledgeable personal travel director with persistent conversational memory.
-You have full real-time control to inspect, adjust, and completely sculpt the traveler's custom vacation itinerary:
-- Destination: ${dest}
-- Duration: ${days} days
-- Group: ${travelers} travelers
-- Flying from: ${origin}
-- Current Hotel: ${hotel}
-- Current Flight: ${flight}
-- Sights: ${places}
-- Booked Activities: ${exps}
-- Total Package Price: ${total}
-- Current Itinerary Schedule:
-${itinSummary || "Standard paced schedule"}${middlemanAdvisory}
+    const recentMutationsText = (tripContext as any)?.recentMutations?.length
+      ? ((tripContext as any).recentMutations as string[]).map((m: string) => `- ${m}`).join("\n")
+      : "No recent manual overrides yet";
 
-🧠 ACTIVE TRAVELER MEMORY & RECALLED CONTEXT:
+    const travelersPartyDesc = travelers === 0
+      ? "0 travelers (Party size not yet confirmed by traveler - feel free to ask or accommodate party size when relevant)"
+      : `${travelers} traveler${travelers > 1 ? "s" : ""}`;
+
+    const systemPrompt = `You are the Travelism AI Concierge, an elite, warm, ultra-knowledgeable personal travel director with superpowers to both give deep destination intelligence and directly manipulate any section of the traveler's custom vacation itinerary in real time.
+
+TRIP SITUATIONAL OVERVIEW:
+- Destination: ${dest}
+- Duration: ${days} days (${days - 1} nights)
+- Group Size: ${travelersPartyDesc}
+- Departure Origin: ${origin}
+- Active Display Currency: ${currency} (STRICT REQUIREMENT: All prices quoted in your conversation MUST use ${currency})
+- Active Stay Mode: ${stayMode}
+- Current Selected Stay: ${hotel}
+- Current Flight: ${flight}
+- Booked Sights & Highlights: ${places}
+- Booked Experiences: ${exps}
+- Total Package Price: ${total}
+
+KNOWN STAYS & HOMESTAYS IN REPERTORY:
+${staysCatalog || "Standard boutique collection"}
+
+PERMITS & REGULATORY REQUIREMENTS:
+${permitsCatalog || "Standard domestic tourist access"}
+
+KNOWN LOCAL CONFLICTS & ADVISORIES:
+${conflictsCatalog || "No active disruptions noted"}
+
+CURRENT ITINERARY SCHEDULE:
+${itinSummary || "Standard balanced schedule"}${middlemanAdvisory}
+
+RECENT ITINERARY MUTATIONS & CHANGES:
+${recentMutationsText}
+
+🧠 ACTIVE TRAVELER MEMORY & PROFILE CONTEXT:
 ${memoryBlock}
 
-Your capabilities:
-1. Provide rich, charismatic travel recommendations with markdown tables, food guides, insider neighborhood secrets, weather tips, and packing essentials.
-2. CONVERSATIONAL MEMORY BEHAVIOR:
-   - You have complete multi-turn thread memory. Seamlessly connect to prior turns and follow-up prompts (e.g. "tell me more about the second one", "what was the price of that hostel?", "swap to what we talked about earlier").
-   - NEVER contradict or re-ask for preferences the traveler already provided in earlier messages or in the Active Traveler Memory above.
-   - Actively synthesize newly revealed traveler preferences (dietary, pace, budget limits, companions, dislikes, special requests) and return them in "memoryDelta" so they are permanently remembered across the entire journey.
-3. RESPONSE FORMATTING GUIDELINES:
-   - Use clean Markdown with headers (### for main sections), clean bullet points (- **Item Name**: Description), and short digestible paragraphs.
-   - For tabular data (visas, day-by-day comparisons, budget breakdowns, costs, packing lists), ALWAYS format as clean GitHub Flavored Markdown tables with line breaks between each row:
-     | Country | Visa Required | Type | Processing Time | Approx Cost (INR) | Notes |
-     |---|---|---|---|---|---|
-     | Poland | Yes – Schengen | Short-stay (C) | 7-15 days | ₹7,000 | Apply via VFS / Consulate |
-   - Never mash multiple rows onto a single line without line breaks.
-   - For step-by-step checklists, use bold title bullets: "- **Completed Application**: Online biometric form."
-   - Use callouts for insider tips: "> 💡 **Pro-Tip**: Book VFS appointment 4 weeks in advance."
-   - For FAQs, use: "- **Q: Can I use Schengen visa for Balkan countries?** Yes, a valid multi-entry Schengen visa..."
-   - Always keep the tone warm, luxurious, proactive, and visually stunning.
-4. Direct Itinerary Actions:
-   - When user asks to customize or clear a day (e.g. "make day 3 a rest / beach day", "I don't want to go out on day 4", "make day 2 a luxury spa and culinary day"):
-     Return action: "replace_day_stops" with dayNum, dayTitle, and a list of realistic stops (e.g. kind="rest"|"meal"|"visit"|"hotel", label, start, end, note).
-   - When user asks to add an activity or event (e.g. "add Haulover Sandbar Party to activities", "add yacht sunset cruise", "schedule deep sea diving"):
-     Return action: "add_activity" with activityData: { name, category, price, blurb, durationHours } and deltaLabel.
-   - When user asks to schedule a stop on a day (e.g. "add dinner at Joe's Stone Crab on day 3 at 8 PM"):
-     Return action: "add_day_stop" with dayNum and stop: { kind: "meal", label: "Dinner at Joe's Stone Crab", start: "20:00", end: "22:00", note: "Iconic seafood" }.
-   - When user asks to remove a stop (e.g. "remove museum from day 4"):
-     Return action: "remove_day_stop" with dayNum and value (the name/query to remove).
-   - When user asks to change focus of a day (e.g. "make day 5 focus on culinary"):
-     Return action: "set_day_focus" with dayNum and value: "culinary"|"staycation"|"wellness"|"beach"|"sightseeing".
-   - When user asks to search for specific hotels or accommodation types (e.g. "find a ryokan with an onsen in Kyoto", "search for luxury 5-star mountain resort", "find boutique heritage hotels", "look for hotels with infinity pool"):
-     Return action: "search_new_hotels" with value: "the specific hotel query / style".
-   - When user asks to search for new sightseeing places (e.g. "find hidden viewpoints", "search for temples"):
-     Return action: "search_new_places" with value: "the place query".
-   - When user asks to switch to wild camping, remove hotels, or change stay style (e.g. "switch to wild camping", "remove all hotels", "we don't need a hotel", "we are bikepacking with tents"):
-     Return action: "set_stay_mode" with value: "wild_camping"|"none"|"hotels"|"homestays"|"campsites_refugios" and deltaLabel (e.g. 'Switched to Wild Camping (₹0 lodging)').
-   - When user asks to adjust hotel tier, trip duration, group size, or pace (e.g. "hotel under 2k", "switch to a cheaper stay around 1500"):
-     Return action: "budget_target" (with numeric value in INR, e.g. 1500 or 2000) | "upgrade_hotel" | "cheaper_hotel" | "set_duration" (days) | "add_days" (+/- days) | "set_travelers" (n) | "set_pace" ("comfortable"|"balanced"|"fast").
-   - For general advice/conversations: Return action: { "kind": "none" }.
+YOUR CORE RULES & SUPERPOWERS:
+1. ALWAYS PROVIDE A RICH, CHARISMATIC, DETAILED EXPLANATION:
+   - CRITICAL REQUIREMENT: NEVER return a dry or lazy 1-liner like "I've tailored that for your journey." or "Done!".
+   - When the user asks a question, requests a change, or asks for an audit, ALWAYS provide a comprehensive, beautifully structured markdown reply with bold headers, bullet points, timings, and explanations for what you evaluated or changed, in addition to executing the actions.
 
-Always return valid JSON:
-{
-  "reply": "Rich, formatted markdown answer with emojis, bullet points, tables, recommendations...",
-  "action": {
-    "kind": "...",
-    "value": ...,
-    "dayNum": ...,
-    "dayTitle": "...",
-    "stops": [ { "kind": "visit"|"meal"|"rest"|"travel", "label": "...", "start": "10:00", "end": "12:00", "note": "..." } ],
-    "stop": { "kind": "...", "label": "...", "start": "...", "end": "...", "note": "..." },
-    "activityData": { "name": "...", "category": "adventure"|"water"|"tour"|"cultural"|"wellness"|"food_exp"|"nightlife", "price": 2500, "blurb": "...", "durationHours": 3 },
-    "deltaLabel": "Brief tag (e.g. 'Day 3 → Rest & Beach Leisure')"
-  },
-  "memoryDelta": {
-    "learnedFacts": ["Traveler is vegetarian", "Prefers boutique hotels with scenic views"],
-    "dietary": ["Vegetarian"],
-    "vibes": ["Scenic photography"],
-    "style": ["Boutique"],
-    "pacing": ["Relaxed mornings"],
-    "budget": ["Target ₹3,00,000"],
-    "companionship": ["Couple"],
-    "pastDecisions": ["Chose lakeside view room"],
-    "keyNotes": ["Looking for authentic local craft workshops"]
-  }
-}`;
+2. WHEN AUDITING THE ITINERARY ("what am I missing?", "audit my itinerary", "how can I improve?"):
+   - Provide an authoritative 4-part audit:
+     * 🩺 **Pacing & Health Audit**: Evaluate high-altitude progression, driving fatigue, and rest day buffers.
+     * 🏡 **Stay & Lodging Audit**: Review selected stays vs authentic homestays and comfort tiers.
+     * 📜 **Permits & Regulatory Readiness**: Checklist of ILP/PAP, checkpoint photocopies, and entry fees.
+     * ✨ **Tailored Enhancements**: Explain the exact stops, breaks, or cultural activities you are adding/optimizing.
 
-    // Construct multi-turn messages array
-    const chatMessages: ChatMsg[] = [{ role: "system", content: systemPrompt }];
+3. WHEN ASKED "WHAT HAVE YOU CHANGED?" OR "WHAT DID YOU DO FOR DAY X AND Y?":
+   - Explicitly consult the CURRENT ITINERARY SCHEDULE and RECENT ITINERARY MUTATIONS above.
+   - Provide a clear, organized schedule breakdown for the requested days (e.g. Day 5, Day 6) showing the exact stops, timings, and why they were added.
+
+4. STAY CUSTOMIZATION & REAL SEARCHING:
+   - If user asks for cheaper homestays/hotels, set action: "swap_hotel" or "cheaper_hotel" or "search_new_hotels".
+   - If user asks for luxury/nicer stays, set action: "upgrade_hotel" or "search_new_hotels".
+   - If user asks to switch stay styles, set action: "set_stay_mode" ("wild_camping"|"homestays"|"campsites_refugios"|"hotels"|"none").
+
+5. ITINERARY SURGERY & TIMETABLE MANIPULATION:
+   - "make day X a rest day / cafe day" → action: "replace_day_stops" with hourly stops (kind, label, start, end, note).
+   - "add stop / break / meal / viewpoint" → action: "add_day_stop" with dayNum and stop.
+   - "remove X from day Y" → action: "remove_day_stop" with dayNum and value.
+   - "add activity / tour" → action: "add_activity" with activityData: { name, category, price, blurb, durationHours }.
+   - "remove activity" → action: "remove_activity" with value.
+   - "add 2 days" / "set duration" → action: "add_days" or "set_duration".
+
+6. STRICT DISPLAY CURRENCY ENFORCEMENT:
+   - Quote ALL prices, activity costs, and rates in "${currency}".
+   - Return new learned traveler facts in "memoryDelta" so they persist.
+
+Always return STRICT JSON matching the schema.`;
+
+    chatMessages = [{ role: "system", content: systemPrompt }];
 
     // Append up to the last 14 history turns
     if (history && Array.isArray(history)) {
@@ -253,25 +274,168 @@ Always return valid JSON:
       }
     );
 
-    // If model returned no action but Middleman detected an explicit budget target action, apply it
-    if ((!res.action || res.action.kind === "none") && middlemanCheck.suggestedAction) {
-      res.action = {
-        kind: middlemanCheck.suggestedAction.kind as any,
-        value: middlemanCheck.suggestedAction.value,
-        deltaLabel: middlemanCheck.suggestedAction.deltaLabel,
-      };
+    // Extract reply text across all potential schema keys
+    let rawReply = (
+      res.reply ||
+      (res as any).response ||
+      (res as any).answer ||
+      (res as any).content ||
+      (res as any).explanation ||
+      res.message ||
+      res.text ||
+      ""
+    ).trim();
+
+    // If reply is wrapped in markdown json, try to extract inside content or strip json markers
+    if (rawReply.startsWith("{") || rawReply.startsWith("```json")) {
+      try {
+        const cleanJsonStr = rawReply.replace(/```(?:json)?\s*/gi, "").replace(/\s*```$/gi, "").trim();
+        const parsed = JSON.parse(cleanJsonStr);
+        const innerReply = parsed.reply || parsed.response || parsed.answer || parsed.content || parsed.message || parsed.text;
+        if (typeof innerReply === "string" && innerReply.trim().length > 0) {
+          rawReply = innerReply.trim();
+        }
+      } catch {
+        // Not direct parseable JSON, proceed with string
+      }
     }
 
-    return json(res, 200);
-  } catch (err) {
-    console.error("[api/chat] Error:", err);
+    rawReply = rawReply
+      .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/gi, "")
+      .replace(/(?:^|\n)\s*---\s*\n\s*\{[\s\S]*\}\s*$/gi, "")
+      .trim();
+
+    // Consolidate actions (support both single action and multiple actions array)
+    const rawActionList = [
+      ...(res.actions || []),
+      ...(res.action ? [res.action] : []),
+    ];
+
+    const allActions = rawActionList.map((a) => {
+      const dayVal = a.dayNum ?? a.day;
+      const parsedDay = typeof dayVal === "number" ? dayVal : typeof dayVal === "string" ? parseInt(dayVal, 10) : undefined;
+      
+      let priceVal: number | undefined = undefined;
+      if (typeof a.activityData?.price === "number") {
+        priceVal = a.activityData.price;
+      } else if (typeof a.activityData?.price === "string") {
+        const num = parseFloat(a.activityData.price.replace(/[^0-9.]/g, ""));
+        if (!isNaN(num)) priceVal = num;
+      }
+
+      let durVal: number | undefined = undefined;
+      if (typeof a.activityData?.durationHours === "number") {
+        durVal = a.activityData.durationHours;
+      } else if (typeof a.activityData?.durationHours === "string") {
+        const num = parseFloat(a.activityData.durationHours);
+        if (!isNaN(num)) durVal = num;
+      }
+
+      return {
+        kind: a.kind || a.action || "none",
+        value: a.value,
+        targetHotelId: a.targetHotelId,
+        targetHotelName: a.targetHotelName,
+        dayNum: typeof parsedDay === "number" && !isNaN(parsedDay) ? parsedDay : undefined,
+        dayTitle: a.dayTitle,
+        stops: a.stops,
+        stop: a.stop,
+        activityData: a.activityData
+          ? {
+              name: a.activityData.name,
+              category: a.activityData.category,
+              price: priceVal,
+              blurb: a.activityData.blurb,
+              durationHours: durVal,
+            }
+          : undefined,
+        deltaLabel: a.deltaLabel,
+      };
+    });
+
+    const primaryAction = allActions[0] || { kind: "none" };
+
+    // If model returned no action but Middleman detected an explicit budget target action, apply it
+    if ((!primaryAction.kind || primaryAction.kind === "none") && middlemanCheck.suggestedAction) {
+      primaryAction.kind = middlemanCheck.suggestedAction.kind as any;
+      primaryAction.value = middlemanCheck.suggestedAction.value;
+      primaryAction.deltaLabel = middlemanCheck.suggestedAction.deltaLabel;
+    }
+
+    // Only apply synthesized fallback if the reply is completely empty (0 characters)
+    if (!rawReply || rawReply.length === 0) {
+      if (allActions.length > 0 && allActions[0].kind !== "none") {
+        const actionSummaries = allActions.map((act) => {
+          if (act.kind === "add_activity" && act.activityData) {
+            return `• **Added Activity**: ${act.activityData.name}${act.activityData.price ? ` (${currency} ${act.activityData.price})` : ""}${act.activityData.blurb ? ` — ${act.activityData.blurb}` : ""}`;
+          }
+          if (act.kind === "add_day_stop" && act.stop) {
+            return `• **Day ${act.dayNum || "Schedule"} Stop Added**: ${act.stop.label} (${act.stop.start}–${act.stop.end})`;
+          }
+          if (act.kind === "replace_day_stops") {
+            return `• **Day ${act.dayNum || "Schedule"} Custom Schedule**: Updated timetable with ${act.stops?.length || "balanced"} stops.`;
+          }
+          if (act.kind === "swap_hotel" || act.kind === "cheaper_hotel") {
+            return `• **Stay Swapped**: Selected new stay tailored to your preferences.`;
+          }
+          return `• **Itinerary Updated**: ${act.deltaLabel || act.kind}`;
+        });
+
+        rawReply = `### 🧭 Itinerary Update Applied\n\nI have updated your journey with the following customizations:\n\n${actionSummaries.join("\n")}\n\nLet me know if you would like to adjust the timings, explore dining spots, or tweak any other days!`;
+      } else {
+        rawReply = `I've analyzed your question regarding ${dest}. What specific spots, timings, or activity preferences would you like to explore next?`;
+      }
+    }
+
     return json(
       {
-        reply: "I've noted that preference and applied the closest optimization to your trip.",
-        action: { kind: "none" },
+        reply: rawReply,
+        action: primaryAction,
+        actions: allActions,
+        memoryDelta: res.memoryDelta,
       },
       200
     );
+  } catch (err) {
+    console.error("[api/chat] Error in chatJSON, attempting prose completion fallback:", err);
+    try {
+      const proseReply = await chat(chatMessages, {
+        signal: req.signal,
+        temperature: 0.4,
+      });
+      let cleanProse = (proseReply || "").trim();
+      try {
+        const parsed = JSON.parse(cleanProse.replace(/```(?:json)?\s*/gi, "").replace(/\s*```$/gi, "").trim());
+        const extracted = parsed.reply || parsed.response || parsed.answer || parsed.content || parsed.message || parsed.text;
+        if (typeof extracted === "string" && extracted.trim().length > 0) {
+          cleanProse = extracted.trim();
+        }
+      } catch {
+        cleanProse = cleanProse
+          .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/gi, "")
+          .replace(/(?:^|\n)\s*---\s*\n\s*\{[\s\S]*\}\s*$/gi, "")
+          .trim();
+      }
+
+      return json(
+        {
+          reply: cleanProse || "I'm here to help you customize your trip! What would you like to explore next?",
+          action: { kind: "none" },
+          actions: [],
+        },
+        200
+      );
+    } catch (fallbackErr) {
+      console.error("[api/chat] Prose fallback error:", fallbackErr);
+      return json(
+        {
+          reply: "I'm here to help you explore top local dining, adjust your stays, or tweak your daily timetable. What would you like to ask or change?",
+          action: { kind: "none" },
+          actions: [],
+        },
+        200
+      );
+    }
   }
 }
 

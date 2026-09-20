@@ -1,5 +1,71 @@
-export function inr(n: number): string {
-  return "₹" + Math.round(n).toLocaleString("en-IN");
+import { useAuth } from "@/store/authStore";
+
+export type SupportedCurrency = "INR" | "USD" | "EUR" | "GBP" | "JPY" | "AED";
+
+// Standard market exchange rates against base INR:
+export const FX_RATES_FROM_INR: Record<SupportedCurrency, number> = {
+  INR: 1,
+  USD: 1 / 87, // ~0.01149 (e.g. ₹2,800 ≈ $32)
+  EUR: 1 / 95, // ~0.01053 (e.g. ₹2,800 ≈ €29)
+  GBP: 1 / 112, // ~0.00893 (e.g. ₹2,800 ≈ £25)
+  JPY: 1.72, // ~1.72 (e.g. ₹2,800 ≈ ¥4,816)
+  AED: 1 / 23.7, // ~0.04219 (e.g. ₹2,800 ≈ AED 118)
+};
+
+export const CURRENCY_SYMBOLS: Record<SupportedCurrency, string> = {
+  INR: "₹",
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  AED: "AED ",
+};
+
+export function getActiveCurrency(): SupportedCurrency {
+  try {
+    const userCurrency = useAuth.getState().user?.preferences?.currency;
+    if (userCurrency && userCurrency in FX_RATES_FROM_INR) {
+      return userCurrency as SupportedCurrency;
+    }
+    if (typeof window !== "undefined") {
+      const prefsRaw = localStorage.getItem("travelism_user_preferences_v1");
+      if (prefsRaw) {
+        const p = JSON.parse(prefsRaw);
+        if (p?.currency && p.currency in FX_RATES_FROM_INR) return p.currency as SupportedCurrency;
+      }
+      const sessionRaw = localStorage.getItem("travelism_active_session_v1") || localStorage.getItem("travelism_active_session");
+      if (sessionRaw) {
+        const session = JSON.parse(sessionRaw);
+        const c = session?.user?.preferences?.currency;
+        if (c && c in FX_RATES_FROM_INR) return c as SupportedCurrency;
+      }
+    }
+  } catch {}
+  return "INR";
+}
+
+export function formatPrice(amountInInr: number, currency?: SupportedCurrency): string {
+  if (typeof amountInInr !== "number" || isNaN(amountInInr)) return "—";
+  const curr = currency || getActiveCurrency();
+  const rate = FX_RATES_FROM_INR[curr] ?? 1;
+  const symbol = CURRENCY_SYMBOLS[curr] ?? "₹";
+  const converted = amountInInr * rate;
+
+  if (curr === "JPY") {
+    return symbol + Math.round(converted).toLocaleString("ja-JP");
+  }
+  if (curr === "INR") {
+    return symbol + Math.round(converted).toLocaleString("en-IN");
+  }
+  if (curr === "USD" || curr === "GBP" || curr === "EUR") {
+    return symbol + Math.round(converted).toLocaleString("en-US");
+  }
+  return symbol + Math.round(converted).toLocaleString();
+}
+
+/** Legacy alias pointing to formatPrice so all existing component call sites automatically reflect the user's preferred currency */
+export function inr(n: number, currency?: SupportedCurrency): string {
+  return formatPrice(n, currency);
 }
 
 export function timeAgo(iso: string): string {

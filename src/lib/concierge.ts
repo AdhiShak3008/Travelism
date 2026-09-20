@@ -21,6 +21,10 @@ export type ConciergeAction =
   | { kind: "remove_place"; query: string }
   | { kind: "avoid_early_flights" }
   | { kind: "set_pace"; pace: "comfortable" | "balanced" | "fast" }
+  | { kind: "set_stay_mode"; mode: "wild_camping" | "campsites_refugios" | "homestays" | "hotels" | "none" }
+  | { kind: "add_activity"; name: string }
+  | { kind: "remove_activity"; query: string }
+  | { kind: "set_day_focus"; dayNum: number; focus: string }
   | { kind: "answer"; text: string }
   | { kind: "preference" } // falls through to the steering-signal path
   | { kind: "unknown" };
@@ -141,6 +145,38 @@ export function routeInstruction(
   // ---- Pace ----
   if (/(more relaxed|slow down|less rushed|take it easy|don'?t rush)/.test(t)) return { kind: "set_pace", pace: "comfortable" };
   if (/(faster|pack more in|see more|busier|more packed)/.test(t)) return { kind: "set_pace", pace: "fast" };
+
+  // ---- Stay mode ----
+  if (/(wild ?camp|bivvy|bivouac|tent(ing)?|camp under the stars)/.test(t)) return { kind: "set_stay_mode", mode: "wild_camping" };
+  if (/(no hotel|without (a )?hotel|don'?t need (a )?hotel|remove (all )?hotels?|skip the hotel|staying with (family|friends|hosts))/.test(t)) return { kind: "set_stay_mode", mode: "none" };
+  if (/(homestay|stay with locals|guesthouse|home ?stay)/.test(t)) return { kind: "set_stay_mode", mode: "homestays" };
+  if (/(campsite|refugio|mountain hut|bothy|hostel dorm)/.test(t)) return { kind: "set_stay_mode", mode: "campsites_refugios" };
+
+  // ---- Day focus (e.g. "make day 3 a rest day", "day 5 focus on food") ----
+  const dayFocusM = t.match(/day\s*(\d+).*?(rest|relax|beach|spa|wellness|culinary|food|sightseeing|staycation|shopping|nightlife)/) ||
+    t.match(/(rest|relax|beach|spa|wellness|culinary|food|staycation)\s*day.*?(\d+)/);
+  if (dayFocusM) {
+    const nums = t.match(/day\s*(\d+)/);
+    const dayNum = nums ? parseInt(nums[1], 10) : parseInt(dayFocusM[1], 10);
+    const focusRaw = /rest|relax|staycation/.test(t) ? "staycation"
+      : /beach/.test(t) ? "beach"
+      : /spa|wellness/.test(t) ? "wellness"
+      : /culinary|food/.test(t) ? "culinary"
+      : "sightseeing";
+    if (dayNum >= 1) return { kind: "set_day_focus", dayNum, focus: focusRaw };
+  }
+
+  // ---- Add / remove an activity ----
+  const addActM = t.match(/(?:add|include|book|schedule)\s+(?:the\s+)?(.+?)(?:\s+(?:to (?:my )?(?:activities|itinerary|trip)|please))?$/);
+  if (addActM && /(activity|activities|tour|cruise|experience|class|tasting|safari|dive|diving|ride|workshop|show|party|excursion)/.test(t)) {
+    const name = addActM[1].replace(/\b(to|my|activities|itinerary|trip|the|a|an)\b/gi, " ").replace(/\s+/g, " ").trim();
+    if (name.length > 2) return { kind: "add_activity", name: name.replace(/\b\w/g, (c) => c.toUpperCase()) };
+  }
+  const rmActM = t.match(/(?:remove|drop|cancel|delete)\s+(?:the\s+)?(.+?)(?:\s+(?:from (?:my )?(?:activities|itinerary)|activity))?$/);
+  if (rmActM && /(activity|activities|tour|cruise|experience|class|the .+ (tour|cruise|class))/.test(t)) {
+    const q = rmActM[1].trim();
+    if (q.length > 2) return { kind: "remove_activity", query: q };
+  }
 
   // A comment that clearly expresses a preference → route to steering path.
   if (/(prefer|care about|important|love|hate|don'?t (like|need|want)|rather)/.test(t)) {

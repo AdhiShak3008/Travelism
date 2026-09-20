@@ -2,6 +2,33 @@ import type { MediaImage, ImageCategory, VideoAsset } from "../types";
 
 // Curated verified high-resolution photography pools grouped by exact theme
 const POOLS: Record<string, string[]> = {
+  volcano: [
+    "photo-1510312305653-8ed496efae75", // Mount Bromo smoking volcanic peak at sunrise
+    "photo-1544735716-392fe2489ffa", // Dramatic volcanic peaks with sunrise clouds
+    "photo-1588668214407-6ea9a6d8c272", // Indonesian caldera crater & smoke
+    "photo-1506744038136-46273834b3fb", // Epic sunrise over volcanic caldera
+  ],
+  sunrise_viewpoint: [
+    "photo-1464822759023-fed622ff2c3b", // Sunrise above clouds panoramic mountain lookout
+    "photo-1470071459604-3b5ec3a7fe05", // Golden sunrise over misty mountain peaks
+    "photo-1508739773434-c26b3d09e071", // Glowing sunrise ridge overlook
+    "photo-1519681393784-d120267933ba", // Dawn alpine panoramic summit view
+  ],
+  desert_sand: [
+    "photo-1509316975850-ff9c5deb0cd9", // Vast volcanic sand plain and desert expanse
+    "photo-1510312305653-8ed496efae75", // Lautan Pasir caldera sea of sand
+    "photo-1473580044384-7ba9967a16a0", // Dramatic ash & dune plain
+  ],
+  temple_hindu: [
+    "photo-1537996194471-e657df975ab4", // Sacred Indonesian temple shrine
+    "photo-1518548419970-58e3b4079ab2", // Ancient stone temple gates and sanctuary
+    "photo-1558862107-d49ef2a04d72", // Historic spiritual temple
+  ],
+  jungle_waterfall: [
+    "photo-1432405972618-c60b0225b8f9", // Spectacular curtain canyon waterfall
+    "photo-1508739773434-c26b3d09e071", // Lush tropical multi-tiered waterfall
+    "photo-1546708973-b339540b5162", // Dramatic ravine cascading falls
+  ],
   beach: [
     "photo-1507525428034-b723cf961d3e", // tropical white sand beach
     "photo-1519046904884-53103b34b206", // sunny beach with palms
@@ -220,11 +247,15 @@ export function getCuratedPlaceImage(name: string, destination: string, category
   const text = `${name} ${destination} ${category}`.toLowerCase();
   let pool = "landscape";
 
-  if (/beach|coast|cove|island|sand|bay|shore|mallorca|ibiza|formentor|cala|playa/i.test(text)) pool = "beach";
+  if (/volcano|crater|caldera|kawah|bromo|ijen|batok|batak|semeru|fuji|etna|vesuvius|rinjani/i.test(text)) pool = "volcano";
+  else if (/sunrise|sunset|penanjakan|kingkong|cinta|lookout|viewpoint|overlook|vista|dawn|golden hour/i.test(text)) pool = "sunrise_viewpoint";
+  else if (/lautan pasir|sea of sand|sand sea|dunes|desert|ash plain/i.test(text)) pool = "desert_sand";
+  else if (/pura|poten|candi|hindu temple|shrine|prambanan|borobudur/i.test(text)) pool = "temple_hindu";
+  else if (/tumpak sewu|sewu|waterfall|fall|cascade|gorge|canyon|ravine/i.test(text)) pool = "jungle_waterfall";
+  else if (/beach|coast|cove|island|sand|bay|shore|mallorca|ibiza|formentor|cala|playa/i.test(text)) pool = "beach";
   else if (/lake|como|bellagio|varenna|tso|tarn|reservoir|water|river|lucerne|loch|firth/i.test(text)) pool = "lake";
   else if (/boat|cruise|ferry|sail|yacht|harbor|port|kayak|canoe/i.test(text)) pool = "watersports";
-  else if (/fall|cascade|waterfall|gorge|canyon|ravine/i.test(text)) pool = "waterfall";
-  else if (/volcano|crag|seat|arthur|calton|hill|peak|summit|mountain|ridge|cliff|lookout|viewpoint|overlook|vista|panorama|highland|glen|moor|spiti/i.test(text)) pool = "landscape";
+  else if (/crag|seat|arthur|calton|hill|peak|summit|mountain|ridge|cliff|panorama|highland|glen|moor|spiti/i.test(text)) pool = "landscape";
   else if (/pass|rohtang|khardung|chang|glacier|snow|alps|matterhorn|zermatt|himalaya/i.test(text)) pool = "himalaya";
   else if (/valley|solang|meadow|hike|trek|trail|walk|ramble|path/i.test(text)) pool = "adventure";
   else if (/monastery|gompa|monk|stupa|temple|shrine|church|cathedral|basilica|duomo|mosque|pagoda|abbey/i.test(text)) pool = "cultural";

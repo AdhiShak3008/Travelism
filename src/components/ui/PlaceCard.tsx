@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
-import type { Place } from "@/lib/types";
+import type { Place, MediaImage } from "@/lib/types";
 import { useTrip } from "@/store/tripStore";
 import { cx } from "@/lib/format";
 import { SourceChips } from "./Provenance";
@@ -33,9 +33,19 @@ export function PlaceCard({ place }: { place: Place }) {
   const lightbox = useLightbox();
   const [expanded, setExpanded] = useState(false);
 
+  const fallbackUrl = dataset?.meta.hero || "https://images.unsplash.com/photo-1510312305653-8ed496efae75?auto=format&fit=crop&w=1200&q=80";
+  const initialUrl = place.images?.[0]?.url || fallbackUrl;
+  const [imgSrc, setImgSrc] = useState(initialUrl);
+
+  useEffect(() => {
+    setImgSrc(place.images?.[0]?.url || fallbackUrl);
+  }, [place.images, fallbackUrl]);
+
   const videos = dataset?.videos.filter((v) => place.videoIds.includes(v.id)) ?? [];
   const mapSearchUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.canonicalName} ${destinationName}`)}`;
-  const hasImages = place.images.length > 0;
+  const displayImages: MediaImage[] = place.images.length > 0
+    ? place.images
+    : [{ id: `fallback_${place.id}`, url: imgSrc, category: "attraction", credit: "Travelism", provenance: "editorial" }];
 
   const youtubeUrl = videos[0]?.searchUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(`${place.canonicalName} ${destinationName} travel`)}`;
 
@@ -53,20 +63,19 @@ export function PlaceCard({ place }: { place: Place }) {
         {/* Postcard photo */}
         <div
           className="relative aspect-[16/10] cursor-zoom-in overflow-hidden bg-gradient-to-br from-brand/15 to-paper-3"
-          onClick={() => hasImages && lightbox.open(place.images, 0, place.canonicalName)}
+          onClick={() => lightbox.open(displayImages, 0, place.canonicalName)}
         >
-          {hasImages ? (
-            <Image
-              src={place.images[0].url}
-              alt={place.canonicalName}
-              fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 380px"
-              className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-              unoptimized
-            />
-          ) : (
-            <div className="absolute inset-0 grid place-items-center text-4xl opacity-60">📍</div>
-          )}
+          <Image
+            src={imgSrc}
+            alt={place.canonicalName}
+            fill
+            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 380px"
+            className="object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+            onError={() => {
+              if (imgSrc !== fallbackUrl) setImgSrc(fallbackUrl);
+            }}
+            unoptimized
+          />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
           
           {/* Category stamps & photo count */}

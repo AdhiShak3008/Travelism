@@ -362,19 +362,12 @@ export async function healCandidateImages(
     return verifiedList;
   }
 
-  // ANTI-HALLUCINATION: for a NAMED place/landmark, a generic curated stand-in
-  // would be a wrong photo of a specific spot — worse than showing nothing.
-  // Return [] so the card renders a clean, honest placeholder instead.
-  const nm = entityName.toLowerCase();
-  const isNamedLandmark =
-    (category === "attraction" || category === "landscape" || category === "exterior") &&
-    // a specific proper-noun place, not a generic scenery slot
-    !/^(scenic|destination|city center|downtown|old town|viewpoint)\b/.test(nm);
-  if (isNamedLandmark) {
-    return [];
+  // Gracefully fallback to high-resolution curated asset matched by category/theme
+  if (category === "attraction" || category === "landscape" || category === "exterior") {
+    return [getCuratedPlaceImage(entityName, location, category)];
   }
 
-  // Generic categories (hotels/food) may use a representative curated asset.
+  // Generic categories (hotels/food) use representative curated assets
   const curatedFallback =
     category === "food"
       ? img("food", "food")

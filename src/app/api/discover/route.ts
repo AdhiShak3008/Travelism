@@ -1,8 +1,11 @@
 import { NextRequest } from "next/server";
 import { scrapeLiveSubjectImages } from "@/lib/server/imageScraper";
+import { nextGeneratedPlaces, warmGenerator, type GeneratedPlace } from "@/lib/server/placeGenerator";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
+
+warmGenerator();
 
 // ============================================================================
 // LIVE GLOBAL DISCOVERY FEED
@@ -91,11 +94,16 @@ async function wikiSummary(name: string, signal?: AbortSignal): Promise<{ extrac
 
 export async function GET(req: NextRequest) {
   const count = Math.min(6, Math.max(1, parseInt(req.nextUrl.searchParams.get("count") || "3", 10)));
-  const picks = shuffle(WORLD_POOL).slice(0, count);
+
+  // Primary source: LLM-generated random destinations. Fallback to the static
+  // WORLD_POOL only if generation is unavailable.
+  let picks: { name: string; country: string; tag: string }[] = (
+    await nextGeneratedPlaces(count + 2, { signal: req.signal }).catch(() => [] as GeneratedPlace[])
+  ).map((p) => ({ name: p.name, country: p.country, tag: p.tagline }));
+  if (picks.length === 0) picks = shuffle(WORLD_POOL).slice(0, count + 2);
 
   const cards = await Promise.all(
     picks.map(async (p) => {
-      const query = `${p.name} ${p.country}`;
       const [imgs, summary] = await Promise.all([
         scrapeLiveSubjectImages(p.name, p.country, "landscape", 1, req.signal).catch(() => []),
         wikiSummary(p.name, req.signal).catch(() => null),
@@ -107,17 +115,11 @@ export async function GET(req: NextRequest) {
       const blurb = summary?.extract
         ? summary.extract.split(". ").slice(0, 1).join(". ").slice(0, 140)
         : `${p.tag} in ${p.country}`;
-      return {
-        name: p.name,
-        country: p.country,
-        tag: p.tag,
-        image,
-        blurb,
-      };
+      return { name: p.name, country: p.country, tag: p.tag, image, blurb };
     })
   );
 
-  const results = cards.filter(Boolean);
+  const results = cards.filter(Boolean).slice(0, count);
   return new Response(JSON.stringify({ places: results }), {
     status: 200,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
