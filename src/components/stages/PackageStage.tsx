@@ -17,6 +17,7 @@ import { ItineraryView } from "@/components/ui/ItineraryView";
 import { InteractiveMapView } from "@/components/ui/InteractiveMapView";
 import { SectionTitle } from "@/components/ui/Primitives";
 import { LangGraphTelemetry } from "@/components/ui/LangGraphTelemetry";
+import { useAuth } from "@/store/authStore";
 import { ConciergeCommandBar } from "@/components/ui/ConciergeCommandBar";
 
 type Tab = "overview" | "itinerary" | "map" | "stays" | "flights" | "todo" | "transport" | "food" | "permits";
@@ -42,6 +43,7 @@ export function PackageStage() {
   const setStayMode = useTrip((s) => s.setStayMode);
   const setTravelers = useTrip((s) => s.setTravelers);
   const openConcierge = useTrip((s) => s.openConcierge);
+  const saveCurrentTrip = useAuth((s) => s.saveCurrentTrip);
   const [tab, setTab] = useState<Tab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
   const [hotelSearch, setHotelSearch] = useState<string>("");
@@ -49,9 +51,24 @@ export function PackageStage() {
   const [flightFilter, setFlightFilter] = useState<string>("all");
   const [flightsView, setFlightsView] = useState<"explore" | "detailed">("explore");
   const [copied, setCopied] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
 
   if (!dataset) return null;
   const { total } = costTotals(blob.costs);
+
+  const handleSaveToVault = () => {
+    saveCurrentTrip({
+      destinationName: blob.destinationName || dataset.meta.name || "Custom Journey",
+      destinationHero: dataset.meta.hero || dataset.places[0]?.images[0]?.url || blob.hotels[0]?.images[0]?.url || "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=600&q=80",
+      durationDays: blob.durationDays,
+      travelers: blob.travelers,
+      totalCost: total,
+      hotelName: blob.hotels[0]?.name || (blob.preferences.stayMode === "wild_camping" ? "Wild Camping" : "Selected Stays"),
+      sightsCount: blob.selectedPlaceIds.length || dataset.places.length,
+    });
+    setSavedToast(true);
+    setTimeout(() => setSavedToast(false), 2500);
+  };
   const moodTags = Object.entries(blob.mood).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
 
   const gw = dataset.meta.gateway.split(/[(,]/)[0].trim().toLowerCase();
@@ -193,6 +210,13 @@ Generated with Travelism 2.0`;
 
               {/* Action buttons */}
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveToVault}
+                  className="chip !py-1.5 !px-3 font-semibold !bg-brand/10 !text-brand !border-brand/40 hover:!bg-brand/20 transition"
+                  title="Save this custom itinerary into your vault"
+                >
+                  {savedToast ? "✓ Saved to Vault!" : "💾 Save to Vault"}
+                </button>
                 <button
                   onClick={handleCopySummary}
                   className="chip !py-1.5 !px-3 font-semibold hover:!bg-paper-3 transition"

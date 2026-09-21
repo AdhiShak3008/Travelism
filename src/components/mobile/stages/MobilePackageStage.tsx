@@ -13,6 +13,7 @@ import { JourneyRibbon } from "@/components/ui/JourneyRibbon";
 import { ItineraryView } from "@/components/ui/ItineraryView";
 import { InteractiveMapView } from "@/components/ui/InteractiveMapView";
 import { LangGraphTelemetry } from "@/components/ui/LangGraphTelemetry";
+import { useAuth } from "@/store/authStore";
 
 type MobileTab = "overview" | "itinerary" | "map" | "stays" | "flights" | "todo" | "food" | "transport" | "permits";
 
@@ -35,12 +36,14 @@ export function MobilePackageStage() {
   const setStayMode = useTrip((s) => s.setStayMode);
   const chooseFlight = useTrip((s) => s.chooseFlight);
   const toggleExperience = useTrip((s) => s.toggleExperience);
+  const saveCurrentTrip = useAuth((s) => s.saveCurrentTrip);
 
   const [tab, setTab] = useState<MobileTab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>("all");
   const [showCostSheet, setShowCostSheet] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
 
   const toggleLock = useTrip((s) => s.toggleLock);
 
@@ -135,24 +138,42 @@ Generated with Travelism 2.0`;
           </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-2 pt-3 border-t border-line/60">
+        <div className="mt-3 flex flex-wrap items-center gap-2 pt-3 border-t border-line/60">
+          <button
+            onClick={() => {
+              saveCurrentTrip({
+                destinationName: blob.destinationName || dataset?.meta?.name || "Custom Journey",
+                destinationHero: dataset?.meta?.hero || dataset?.places[0]?.images[0]?.url || blob.hotels[0]?.images[0]?.url || "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=600&q=80",
+                durationDays: blob.durationDays,
+                travelers: blob.travelers,
+                totalCost: total,
+                hotelName: blob.hotels[0]?.name || (blob.preferences.stayMode === "wild_camping" ? "Wild Camping" : "Selected Stays"),
+                sightsCount: blob.selectedPlaceIds.length || (dataset?.places.length ?? 8),
+              });
+              setSavedToast(true);
+              setTimeout(() => setSavedToast(false), 2500);
+            }}
+            className="flex-1 rounded-xl border border-brand/40 bg-brand/10 py-1.5 text-xs font-bold text-brand active:scale-95 transition"
+          >
+            {savedToast ? "✓ Saved in Vault!" : "💾 Save to Vault"}
+          </button>
           <button
             onClick={handleCopySummary}
-            className="flex-1 rounded-xl border border-line bg-paper-2 py-1.5 text-xs font-semibold text-ink-soft active:bg-paper-3 transition"
+            className="rounded-xl border border-line bg-paper-2 px-3 py-1.5 text-xs font-semibold text-ink-soft active:bg-paper-3 transition"
           >
-            {copied ? "✓ Copied!" : "📋 Copy Summary"}
+            {copied ? "✓ Copied!" : "📋 Copy"}
           </button>
           <button
             onClick={() => window.print()}
-            className="rounded-xl border border-line bg-paper-2 px-3.5 py-1.5 text-xs font-semibold text-ink-soft active:bg-paper-3 transition"
+            className="rounded-xl border border-line bg-paper-2 px-3 py-1.5 text-xs font-semibold text-ink-soft active:bg-paper-3 transition"
           >
-            🖨️ Print / PDF
+            🖨️ PDF
           </button>
           <button
             onClick={() => setShowCostSheet(true)}
-            className="rounded-xl border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-bold text-brand active:scale-95 transition"
+            className="rounded-xl border border-line bg-paper-2 px-3 py-1.5 text-xs font-semibold text-ink-soft active:scale-95 transition"
           >
-            💳 Itemized Cost
+            💳 Cost
           </button>
         </div>
       </div>

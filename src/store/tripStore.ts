@@ -200,7 +200,7 @@ interface TripStore {
   // flow
   setStage: (s: Stage) => void;
   goToStage: (s: Stage) => void;
-  startDream: (dream: string) => Promise<void>;
+  startDream: (dream: string, options?: { durationDays?: number; travelers?: number; origin?: string }) => Promise<void>;
   clearClarification: () => void;
   refineInvestigation: (text: string) => Promise<void>;
   refineHotels: (text: string) => Promise<void>;
@@ -356,7 +356,7 @@ export const useTrip = create<TripStore>((set, get) => ({
 
   clearClarification: () => set({ clarification: null }),
 
-  startDream: async (dream) => {
+  startDream: async (dream, options) => {
     set({ clarification: null });
 
     // ---- TRAVEL DNA: seed defaults from the saved profile (dream overrides) ----
@@ -378,9 +378,11 @@ export const useTrip = create<TripStore>((set, get) => ({
     // avoid-early: honored if either the profile or the dream asks for it
     if (profile.avoidEarly) prefs.avoidEarlyFlights = true;
 
-    const extractedOriginCity = extractOrigin(dream) || "Hyderabad";
-    const extractedDuration = extractDuration(dream) || 7;
-    const extractedTrav = extractTravelers(dream) ?? prefs.travelers ?? 0;
+    const extractedOriginCity = options?.origin || extractOrigin(dream) || "Hyderabad";
+    const extractedDuration = options?.durationDays || extractDuration(dream) || 7;
+    const extractedTrav = options?.travelers !== undefined
+      ? options.travelers
+      : (extractTravelers(dream) ?? prefs.travelers ?? 0);
 
     const dreamMentionsStay = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent|no\s*hotel|without\s*hotel|campsite|refugio|mountain\s*hut|bothy|homestay|hotel|resort|hostel/i.test(dream);
     const isOutdoor = /bikepacking|backpacking|wild\s*camp|bivvy|bivouac|self[\s-]supported|tent/i.test(dream);
@@ -1491,7 +1493,21 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   book: () => {
-    const { blob } = get();
+    const { blob, dataset } = get();
+    const { total } = costTotals(blob.costs);
+    const destHero = dataset?.meta?.hero || dataset?.places[0]?.images[0]?.url || blob.hotels[0]?.images[0]?.url || "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=600&q=80";
+
+    // Auto-save and register into user's saved trips vault
+    useAuth.getState().saveCurrentTrip({
+      destinationName: blob.destinationName || dataset?.meta?.name || "Custom Journey",
+      destinationHero: destHero,
+      durationDays: blob.durationDays,
+      travelers: blob.travelers,
+      totalCost: total,
+      hotelName: blob.hotels[0]?.name || (blob.preferences.stayMode === "wild_camping" ? "Wild Camping" : "Selected Stays"),
+      sightsCount: blob.selectedPlaceIds.length || (dataset?.places.length ?? 8),
+    });
+
     set({
       blob: { ...blob, bookingState: "booked", bookedAt: now(), updatedAt: now() },
       stage: "trip",

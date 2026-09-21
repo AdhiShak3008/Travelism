@@ -77,6 +77,35 @@ export function savePreferencesToStorage(prefs: TravelPreferences): void {
   } catch {}
 }
 
+export function getUserVaultKey(userIdentifier?: string): string {
+  if (!userIdentifier) return "travelism_user_vault_default";
+  const clean = userIdentifier.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  return `travelism_user_vault_${clean}`;
+}
+
+export function loadUserSavedTrips(userIdentifier?: string): SavedTripSummary[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const key = getUserVaultKey(userIdentifier);
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const storedTrips: SavedTripSummary[] = JSON.parse(raw);
+      if (Array.isArray(storedTrips)) {
+        return storedTrips;
+      }
+    }
+  } catch {}
+  return [];
+}
+
+export function saveUserTripsToVault(trips: SavedTripSummary[], userIdentifier?: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = getUserVaultKey(userIdentifier);
+    localStorage.setItem(key, JSON.stringify(trips));
+  } catch {}
+}
+
 const DEMO_USER: UserProfile = {
   id: "usr_demo_vip",
   name: "Aditya Shakya",
@@ -85,41 +114,7 @@ const DEMO_USER: UserProfile = {
   tier: "vip",
   isDemo: true,
   memberSince: "March 2024",
-  savedTrips: [
-    {
-      id: "trip_saved_1",
-      destinationName: "Kyoto & Tokyo, Japan",
-      destinationHero: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=600&q=80",
-      durationDays: 10,
-      travelers: 2,
-      totalCost: 384000,
-      createdAt: "2 days ago",
-      hotelName: "Hoshinoya Kyoto & Luxury Ryokan",
-      sightsCount: 14,
-    },
-    {
-      id: "trip_saved_2",
-      destinationName: "Reykjavik, Iceland",
-      destinationHero: "https://images.unsplash.com/photo-1504893524553-b855bce32c67?auto=format&fit=crop&w=600&q=80",
-      durationDays: 7,
-      travelers: 2,
-      totalCost: 295000,
-      createdAt: "Last week",
-      hotelName: "The Retreat at Blue Lagoon",
-      sightsCount: 8,
-    },
-    {
-      id: "trip_saved_3",
-      destinationName: "Ladakh & Nubra Valley, India",
-      destinationHero: "https://images.unsplash.com/photo-1581793745862-99fde7fa73d2?auto=format&fit=crop&w=600&q=80",
-      durationDays: 8,
-      travelers: 2,
-      totalCost: 142000,
-      createdAt: "2 weeks ago",
-      hotelName: "The Grand Dragon Ladakh",
-      sightsCount: 11,
-    },
-  ],
+  savedTrips: [],
   preferences: { ...DEFAULT_PREFERENCES },
 };
 
@@ -172,6 +167,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
 
   login: (email: string, name = "Traveler") => {
     const savedPrefs = loadSavedPreferences();
+    const userTrips = loadUserSavedTrips(email);
     const newUser: UserProfile = {
       id: `usr_${Date.now()}`,
       name: name || email.split("@")[0],
@@ -180,7 +176,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
       tier: "explorer",
       isDemo: false,
       memberSince: "Today",
-      savedTrips: [],
+      savedTrips: userTrips,
       preferences: savedPrefs,
     };
     
@@ -197,8 +193,10 @@ export const useAuth = create<AuthStore>((set, get) => ({
 
   loginAsDemo: () => {
     const savedPrefs = loadSavedPreferences();
+    const userTrips = loadUserSavedTrips(DEMO_USER.email);
     const demoUser: UserProfile = {
       ...DEMO_USER,
+      savedTrips: userTrips,
       preferences: savedPrefs,
     };
     const session = saveActiveSession(demoUser);
@@ -226,15 +224,19 @@ export const useAuth = create<AuthStore>((set, get) => ({
     const res = validateStoredSession();
     if (res.status === "valid" && res.session?.user) {
       const savedPrefs = loadSavedPreferences();
+      const accountKey = res.session.user.email || res.session.user.id;
+      const userTrips = loadUserSavedTrips(accountKey);
+      
       const restoredUser: UserProfile = {
         ...res.session.user,
+        savedTrips: userTrips,
         preferences: {
           ...DEFAULT_PREFERENCES,
           ...res.session.user.preferences,
           ...savedPrefs,
         },
       };
-      console.log("[AuthStore] Restored session with preferences:", restoredUser.preferences);
+      console.log("[AuthStore] Restored session for user:", restoredUser.name, "with", restoredUser.savedTrips.length, "trips");
       set({
         user: restoredUser,
         isAuthenticated: true,
@@ -289,29 +291,59 @@ export const useAuth = create<AuthStore>((set, get) => ({
 
   saveCurrentTrip: (summary) => {
     const { user } = get();
-    if (!user) return;
-    const newSaved: SavedTripSummary = {
-      ...summary,
-      id: `trip_saved_${Date.now()}`,
-      createdAt: "Just now",
-    };
-    const updatedUser = {
-      ...user,
-      savedTrips: [newSaved, ...user.savedTrips],
-    };
-    saveActiveSession(updatedUser);
-    set({ user: updatedUser });
+    const accountKey = user?.email || user?.id || "default";
+    const currentTrips = user ? user.savedTrips : loadUserSavedTrips(accountKey);
+    
+    // Check if trip already exists by destination name
+    const cleanDest = (summary.destinationName || "").toLowerCase().trim();
+    const existingIndex = currentTrips.findIndex(
+      (t) => t.destinationName.toLowerCase().trim() === cleanDest
+    );
+
+    let updatedTrips: SavedTripSummary[];
+    if (existingIndex >= 0) {
+      const existing = currentTrips[existingIndex];
+      const updated: SavedTripSummary = {
+        ...existing,
+        ...summary,
+        createdAt: "Updated just now",
+      };
+      updatedTrips = [updated, ...currentTrips.filter((_, idx) => idx !== existingIndex)];
+    } else {
+      const newSaved: SavedTripSummary = {
+        ...summary,
+        id: `trip_saved_${Date.now()}`,
+        createdAt: "Just now",
+      };
+      updatedTrips = [newSaved, ...currentTrips];
+    }
+
+    saveUserTripsToVault(updatedTrips, accountKey);
+
+    if (user) {
+      const updatedUser = {
+        ...user,
+        savedTrips: updatedTrips,
+      };
+      saveActiveSession(updatedUser);
+      set({ user: updatedUser });
+    }
   },
 
   removeSavedTrip: (tripId: string) => {
     const { user } = get();
-    if (!user) return;
-    const updatedUser = {
-      ...user,
-      savedTrips: user.savedTrips.filter((t) => t.id !== tripId),
-    };
-    saveActiveSession(updatedUser);
-    set({ user: updatedUser });
+    const accountKey = user?.email || user?.id || "default";
+    const currentTrips = user ? user.savedTrips : loadUserSavedTrips(accountKey);
+    const updatedTrips = currentTrips.filter((t) => t.id !== tripId);
+    saveUserTripsToVault(updatedTrips, accountKey);
+    if (user) {
+      const updatedUser = {
+        ...user,
+        savedTrips: updatedTrips,
+      };
+      saveActiveSession(updatedUser);
+      set({ user: updatedUser });
+    }
   },
 
   updatePreferences: (prefs) => {
