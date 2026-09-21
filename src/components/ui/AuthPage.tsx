@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -8,7 +8,7 @@ import { useAuth } from "@/store/authStore";
 import { useTrip } from "@/store/tripStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { cx } from "@/lib/format";
-import { type DiscoveredSpot } from "@/lib/globalSpots";
+import { WORLD_SPOTS_CATALOG, type DiscoveredSpot } from "@/lib/globalSpots";
 
 const CATEGORIES = [
   { id: "all", label: "✨ All World Wonders" },
@@ -74,14 +74,18 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [queryReason, setQueryReason] = useState<string | null>(null);
 
-  // Dynamic Infinite Spots & Screensaver State — starts empty and is filled
-  // entirely by LIVE scouting (no hardcoded initial spots).
-  const [spots, setSpots] = useState<DiscoveredSpot[]>([]);
+  // Dynamic Infinite Spots & Screensaver State — seeded with an initial spot so
+  // the passport renders immediately on frame 0, while live radar scouts in the background.
+  const [spots, setSpots] = useState<DiscoveredSpot[]>(() => {
+    const initial = WORLD_SPOTS_CATALOG[0];
+    return initial ? [initial] : [];
+  });
   const [currentIndex, setCurrentIndex] = useState(0);
   const [autoPlay, setAutoPlay] = useState(true);
 
   // Active Search / Radar Background Scout State
   const [isScouting, setIsScouting] = useState(false);
+  const isScoutingRef = useRef(false);
   const [scoutedNextSpot, setScoutedNextSpot] = useState<DiscoveredSpot | null>(null);
   const [scoutingRadarText, setScoutingRadarText] = useState("📡 World Radar: Active");
 
@@ -110,8 +114,8 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
 
   const activeReason = queryReason || logoutReason;
 
-  // Active current spot — null until the first live spot has been scouted.
-  const currentSpot: DiscoveredSpot | null = spots[currentIndex] || spots[0] || null;
+  // Active current spot — fallback to catalog if empty
+  const currentSpot: DiscoveredSpot | null = spots[currentIndex] || spots[0] || WORLD_SPOTS_CATALOG[0] || null;
   // Verified image gallery for the focused spot (falls back to the single hero).
   const gallery: string[] =
     currentSpot?.images && currentSpot.images.length > 0
@@ -123,6 +127,8 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
 
   // Scout next spot asynchronously from API and preload image
   const scoutNextGlobalSpot = useCallback(async (cat: string, existingList: DiscoveredSpot[]) => {
+    if (isScoutingRef.current) return;
+    isScoutingRef.current = true;
     try {
       setIsScouting(true);
       setScoutingRadarText("📡 Radar: Scouting next global spot...");
@@ -146,12 +152,23 @@ export function AuthPage({ standalone = false, isRootLanding = false }: { standa
     } catch {
       setScoutingRadarText("📡 World Radar: Active");
     } finally {
+      isScoutingRef.current = false;
       setIsScouting(false);
     }
   }, []);
 
-  // When category changes, reset index and scout fresh spot
+  // When category changes, switch to matching spot immediately and scout fresh spot
   useEffect(() => {
+    const catIdx = spots.findIndex((s) => selectedCategory === "all" || s.category === selectedCategory);
+    if (catIdx !== -1) {
+      setCurrentIndex(catIdx);
+    } else {
+      const fallback = WORLD_SPOTS_CATALOG.find((s) => selectedCategory === "all" || s.category === selectedCategory);
+      if (fallback) {
+        setSpots((prev) => [fallback, ...prev.filter((p) => p.id !== fallback.id)]);
+        setCurrentIndex(0);
+      }
+    }
     scoutNextGlobalSpot(selectedCategory, spots);
   }, [selectedCategory, scoutNextGlobalSpot]);
 

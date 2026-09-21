@@ -226,13 +226,19 @@ async function saveWarmPoolToRedis(): Promise<void> {
   }
 }
 
+let redisLoadPromise: Promise<void> | null = null;
+
 // Load the warm pool from Redis if it exists (on server startup).
 async function loadWarmPoolFromRedis(): Promise<void> {
   if (!redisEnabled()) return;
   try {
     const cached = await redisGetJson<DiscoveredSpot[]>("spots:warmpool");
     if (Array.isArray(cached) && cached.length > 0) {
-      warmPool.push(...cached);
+      for (const s of cached) {
+        if (!warmPool.some((p) => p.id === s.id)) {
+          warmPool.push(s);
+        }
+      }
       console.log(`[spots:discover] Loaded ${cached.length} warm spots from Redis`);
     }
   } catch {
@@ -240,12 +246,24 @@ async function loadWarmPoolFromRedis(): Promise<void> {
   }
 }
 
+async function ensureWarmPoolLoaded(): Promise<void> {
+  if (warmPool.length > 0) return;
+  if (!redisLoadPromise) {
+    redisLoadPromise = loadWarmPoolFromRedis().finally(() => {
+      redisLoadPromise = null;
+    });
+  }
+  await redisLoadPromise;
+}
+
 // Warm the generator + pool as soon as this module loads (server start).
 warmGenerator();
-void loadWarmPoolFromRedis();
-void refillWarmPool();
+void ensureWarmPoolLoaded().then(() => refillWarmPool());
 
 export async function GET(req: Request) {
+  // 0) Ensure Redis warm pool has finished loading (fast await so first request doesn't miss cache)
+  await ensureWarmPoolLoaded();
+
   // Kick off pool warming on the first request so subsequent visits are instant.
   if (!warmStarted) {
     warmStarted = true;
@@ -262,27 +280,29 @@ export async function GET(req: Request) {
     );
     if (warmIdx !== -1) {
       const [spot] = warmPool.splice(warmIdx, 1);
-      void refillWarmPool(); // top back up for next time (non-blocking)
+      void saveWarmPoolToRedis(); // keep Redis in sync so popped spots aren't served again
+      void refillWarmPool(); // top back up for next time (non-blocking in background)
       return NextResponse.json({ spot, totalAvailable: POOL.length, scoutedAt: new Date().toISOString(), warm: true });
     }
 
-    // 2) Cold path: generate + enrich live (and kick off a background refill).
-    void refillWarmPool();
-    const exKeys = new Set([...excludeIds].map((id) => id.replace(/^live-/, "")));
-    let candidates: (GeneratedPlace | PoolEntry)[] = await nextGeneratedPlaces(4, {
-      category: category || undefined,
-      exclude: exKeys,
-      signal: req.signal,
-    }).catch(() => []);
-    if (candidates.length === 0) candidates = fallbackCandidates(excludeIds);
+    // 2) Fast fallback: Pick instantly from WORLD_SPOTS_CATALOG matching category
+    // NEVER block the user's HTTP request for 8 seconds on the login page!
+    void refillWarmPool(); // trigger background refill so fresh live spots populate for subsequent calls
 
-    for (const c of candidates.slice(0, 3)) {
-      const spot = await liveSpot(c, req);
-      if (spot) {
-        return NextResponse.json({ spot, totalAvailable: 500, scoutedAt: new Date().toISOString(), warm: false });
-      }
-    }
-    return NextResponse.json({ spot: WORLD_SPOTS_CATALOG[0], totalAvailable: POOL.length, scoutedAt: new Date().toISOString() });
+    const catalogMatches = WORLD_SPOTS_CATALOG.filter(
+      (s) => !excludeIds.has(s.id) && (!category || category === "all" || s.category === category)
+    );
+    const fallbackSpot =
+      catalogMatches[Math.floor(Math.random() * catalogMatches.length)] ||
+      WORLD_SPOTS_CATALOG.find((s) => !category || category === "all" || s.category === category) ||
+      WORLD_SPOTS_CATALOG[0];
+
+    return NextResponse.json({
+      spot: fallbackSpot,
+      totalAvailable: WORLD_SPOTS_CATALOG.length,
+      scoutedAt: new Date().toISOString(),
+      warm: false,
+    });
   } catch {
     return NextResponse.json({ spot: WORLD_SPOTS_CATALOG[0], totalAvailable: WORLD_SPOTS_CATALOG.length, scoutedAt: new Date().toISOString() });
   }
