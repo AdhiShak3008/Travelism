@@ -8,6 +8,7 @@ import { useAuth } from "@/store/authStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
 import { useDiscoverFeed } from "@/lib/useDiscoverFeed";
+import { VoiceButton } from "@/components/ui/VoiceButton";
 
 const CATEGORIES = [
   { label: "🏝️ Tropical Islands", query: "Bali and Gili Islands for a relaxing 8 days with beachfront villas, surfing, and sunset dining" },
@@ -191,9 +192,19 @@ export function DreamStage() {
               />
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 px-2 pb-1 pt-3">
-                <span className="text-xs font-medium text-ink-faint">
-                  Press <kbd className="rounded bg-paper-3 px-1.5 py-0.5 font-mono text-[11px] text-ink">Ctrl+Enter</kbd> to launch
-                </span>
+                <div className="flex items-center gap-2.5">
+                  <VoiceButton
+                    value={text}
+                    onChange={setText}
+                    onSubmit={(val) => val.trim() && startDream(val.trim())}
+                    autoSubmit
+                    size="md"
+                    title="Speak your trip vision (Words appear live & auto-launches)"
+                  />
+                  <span className="text-xs font-medium text-ink-faint hidden sm:inline">
+                    Press <kbd className="rounded bg-paper-3 px-1.5 py-0.5 font-mono text-[11px] text-ink">Ctrl+Enter</kbd> to launch
+                  </span>
+                </div>
 
                 <button
                   onClick={() => text.trim() && startDream(text)}

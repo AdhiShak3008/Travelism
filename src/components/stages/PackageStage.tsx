@@ -43,6 +43,7 @@ export function PackageStage() {
   const setStayMode = useTrip((s) => s.setStayMode);
   const setTravelers = useTrip((s) => s.setTravelers);
   const openConcierge = useTrip((s) => s.openConcierge);
+  const startDream = useTrip((s) => s.startDream);
   const saveCurrentTrip = useAuth((s) => s.saveCurrentTrip);
   const [tab, setTab] = useState<Tab>("overview");
   const [hotelTierFilter, setHotelTierFilter] = useState<string>("all");
@@ -65,6 +66,8 @@ export function PackageStage() {
       totalCost: total,
       hotelName: blob.hotels[0]?.name || (blob.preferences.stayMode === "wild_camping" ? "Wild Camping" : "Selected Stays"),
       sightsCount: blob.selectedPlaceIds.length || dataset.places.length,
+      blobSnapshot: blob,
+      datasetSnapshot: dataset,
     });
     setSavedToast(true);
     setTimeout(() => setSavedToast(false), 2500);
@@ -230,6 +233,25 @@ Generated with Travelism 2.0`;
                   title="Print or Save PDF of this itinerary"
                 >
                   🖨️ Print / PDF
+                </button>
+                <button
+                  onClick={() => {
+                    const dest = blob.destinationName || dataset.meta.name || "this destination";
+                    if (
+                      window.confirm(
+                        `Re-run AI swarm investigation for ${dest}?\n\nThis will trigger live web crawlers to scout fresh spots, stays, and insights. (You can also use the AI Concierge on this page to make instant changes without re-running swarms).`
+                      )
+                    ) {
+                      startDream(dest, {
+                        durationDays: blob.durationDays,
+                        travelers: blob.travelers,
+                      });
+                    }
+                  }}
+                  className="chip !py-1.5 !px-3 font-semibold hover:!bg-paper-3 text-ink-soft hover:text-brand transition flex items-center gap-1.5"
+                  title="Optionally re-run live crawling swarms for this trip"
+                >
+                  <span>⚡ Re-run Swarms</span>
                 </button>
               </div>
             </div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
+import { VoiceButton } from "./VoiceButton";
 
 const SMART_PROMPT_CHIPS = [
   {
@@ -116,16 +117,31 @@ export function ConciergeCommandBar() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Ask anything about ${destinationName || "your trip"} or say "find cheaper homestays", "check permits", "swap stay"...`}
-            className="w-full rounded-2xl border border-line bg-paper/90 pl-11 pr-28 py-3 text-xs sm:text-sm text-ink placeholder:text-ink-faint shadow-inner focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
+            className="w-full rounded-2xl border border-line bg-paper/90 pl-11 pr-36 py-3 text-xs sm:text-sm text-ink placeholder:text-ink-faint shadow-inner focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
           />
-          <button
-            type="submit"
-            disabled={!query.trim()}
-            className="absolute right-2 inline-flex items-center gap-1.5 rounded-xl bg-brand px-3.5 py-1.5 text-xs font-bold text-paper shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition"
-          >
-            <span>Ask AI</span>
-            <span>↵</span>
-          </button>
+          <div className="absolute right-2 flex items-center gap-1.5">
+            <VoiceButton
+              value={query}
+              onChange={setQuery}
+              onSubmit={(val) => {
+                if (val.trim()) {
+                  openConcierge(val.trim());
+                  setQuery("");
+                }
+              }}
+              autoSubmit
+              size="sm"
+              title="Speak command (Words appear live & auto-executes)"
+            />
+            <button
+              type="submit"
+              disabled={!query.trim()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-3.5 py-1.5 text-xs font-bold text-paper shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition"
+            >
+              <span>Ask AI</span>
+              <span>↵</span>
+            </button>
+          </div>
         </div>
       </form>
 

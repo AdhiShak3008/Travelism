@@ -6,6 +6,7 @@ import { useTrip } from "@/store/tripStore";
 import { costTotals } from "@/lib/engine";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { MemoryBadge } from "@/components/ui/MemoryBadge";
+import { VoiceButton } from "@/components/ui/VoiceButton";
 
 const QUICK_CHIPS = [
   { label: "💸 Cut 15% Cost", prompt: "How can I reduce the total trip cost by 15%?" },
@@ -414,6 +415,20 @@ export function MobileModifySheet() {
                   rows={1}
                   placeholder="Ask anything or request trip changes..."
                   className="flex-1 resize-none max-h-24 min-h-[38px] rounded-xl border border-line bg-paper-2 px-3.5 py-2 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-brand leading-relaxed scrollbar-none"
+                />
+                <VoiceButton
+                  value={text}
+                  onChange={(val) => {
+                    setText(val);
+                    if (textareaRef.current) {
+                      textareaRef.current.style.height = "auto";
+                      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 100)}px`;
+                    }
+                  }}
+                  onSubmit={(val) => val.trim() && send(val.trim())}
+                  autoSubmit
+                  size="sm"
+                  title="Speak message (Words appear live & auto-sends)"
                 />
                 <button
                   onClick={() => send(text)}

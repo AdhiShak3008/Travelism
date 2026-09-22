@@ -36,6 +36,7 @@ export function MobilePackageStage() {
   const setStayMode = useTrip((s) => s.setStayMode);
   const chooseFlight = useTrip((s) => s.chooseFlight);
   const toggleExperience = useTrip((s) => s.toggleExperience);
+  const startDream = useTrip((s) => s.startDream);
   const saveCurrentTrip = useAuth((s) => s.saveCurrentTrip);
 
   const [tab, setTab] = useState<MobileTab>("overview");
@@ -149,6 +150,8 @@ Generated with Travelism 2.0`;
                 totalCost: total,
                 hotelName: blob.hotels[0]?.name || (blob.preferences.stayMode === "wild_camping" ? "Wild Camping" : "Selected Stays"),
                 sightsCount: blob.selectedPlaceIds.length || (dataset?.places.length ?? 8),
+                blobSnapshot: blob,
+                datasetSnapshot: dataset,
               });
               setSavedToast(true);
               setTimeout(() => setSavedToast(false), 2500);
@@ -168,6 +171,21 @@ Generated with Travelism 2.0`;
             className="rounded-xl border border-line bg-paper-2 px-3 py-1.5 text-xs font-semibold text-ink-soft active:bg-paper-3 transition"
           >
             🖨️ PDF
+          </button>
+          <button
+            onClick={() => {
+              const dest = blob.destinationName || dataset?.meta?.name || "this trip";
+              if (window.confirm(`Re-run AI swarm investigation for ${dest}?`)) {
+                startDream(dest, {
+                  durationDays: blob.durationDays,
+                  travelers: blob.travelers,
+                });
+              }
+            }}
+            className="rounded-xl border border-line bg-paper-2 px-2.5 py-1.5 text-xs font-semibold text-ink-soft active:bg-paper-3 transition"
+            title="Re-run AI swarms"
+          >
+            ⚡ Swarms
           </button>
           <button
             onClick={() => setShowCostSheet(true)}

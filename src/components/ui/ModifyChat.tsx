@@ -9,6 +9,8 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import { MemoryBadge } from "./MemoryBadge";
 import { useAuth } from "@/store/authStore";
 import { getActiveCurrency, formatPrice } from "@/lib/format";
+import { VoiceButton } from "./VoiceButton";
+import { useVoiceOutput } from "@/hooks/useVoiceOutput";
 
 const QUICK_QUESTIONS = [
   { label: "📜 Check Permits", prompt: "Are there any permits, visas, or special documents required for this trip?" },
@@ -56,6 +58,12 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
   const modalBottomAnchor = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modalTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const { isSpeaking, voiceEnabled, toggleVoiceEnabled, speak, stop } = useVoiceOutput();
+  const voiceEnabledRef = useRef(voiceEnabled);
+  useEffect(() => {
+    voiceEnabledRef.current = voiceEnabled;
+  }, [voiceEnabled]);
 
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
@@ -488,6 +496,10 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
           memoryUpdates: learnedUpdates.length > 0 ? learnedUpdates : undefined,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         });
+
+        if (voiceEnabledRef.current && data.reply) {
+          speak(data.reply);
+        }
       } else {
         applyInstruction(userPrompt);
         const latest = useTrip.getState().blob.mutations[0];
@@ -555,7 +567,19 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={toggleVoiceEnabled}
+              className={`flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold transition ${
+                voiceEnabled
+                  ? "border-brand/40 bg-brand/10 text-brand ring-1 ring-brand/30"
+                  : "border-line-strong/60 bg-paper-2 text-ink-soft hover:text-ink"
+              }`}
+              title={voiceEnabled ? "Voice Assistant response active (Click to mute)" : "Enable voice assistant speech response"}
+            >
+              <span className={voiceEnabled ? "animate-pulse" : ""}>{voiceEnabled ? "🔊" : "🔇"}</span>
+              <span className="hidden sm:inline">{voiceEnabled ? "Voice" : "Voice"}</span>
+            </button>
             <MemoryBadge compact />
             <button
               onClick={() => setIsExpanded(true)}
@@ -627,11 +651,21 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
                 )}
                 {m.timestamp && (
                   <div
-                    className={`mt-1 text-[10px] ${
+                    className={`mt-1 flex items-center justify-between text-[10px] ${
                       m.role === "user" ? "text-paper/75 text-right" : "text-ink-faint text-left"
                     }`}
                   >
-                    {m.timestamp}
+                    <span>{m.timestamp}</span>
+                    {m.role === "concierge" && (
+                      <button
+                        onClick={() => (isSpeaking ? stop() : speak(m.text))}
+                        className="inline-flex items-center gap-1 font-medium text-ink-soft hover:text-brand transition ml-2 px-1.5 py-0.5 rounded bg-paper-3/40 hover:bg-paper-3"
+                        title="Listen to this response"
+                      >
+                        <span>🔊</span>
+                        <span>Listen</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -700,7 +734,7 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
             ))}
           </div>
 
-          {/* ChatGPT-style multi-line expanding input */}
+            {/* ChatGPT-style multi-line expanding input */}
           <div className="relative mt-1 flex items-end gap-2">
             <div className="relative flex-1">
               <textarea
@@ -723,6 +757,20 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
                 className="w-full resize-none max-h-28 min-h-[40px] rounded-2xl border border-line bg-paper-2 pl-3.5 pr-10 py-2 text-xs md:text-sm text-ink outline-none placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand/20 transition disabled:opacity-50 leading-relaxed scrollbar-none"
               />
             </div>
+            <VoiceButton
+              value={text}
+              onChange={(val) => {
+                setText(val);
+                if (textareaRef.current) {
+                  textareaRef.current.style.height = "auto";
+                  textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+                }
+              }}
+              onSubmit={(val) => val.trim() && send(val.trim())}
+              autoSubmit
+              size="md"
+              title="Speak message (Words appear live & auto-sends)"
+            />
             <button
               onClick={() => send(text)}
               disabled={!text.trim() || isTyping}
@@ -761,6 +809,18 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <button
+                    onClick={toggleVoiceEnabled}
+                    className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                      voiceEnabled
+                        ? "border-brand/40 bg-brand/10 text-brand ring-1 ring-brand/30"
+                        : "border-line bg-paper text-ink-soft hover:text-ink"
+                    }`}
+                    title={voiceEnabled ? "Voice assistant responses active (Click to mute)" : "Enable voice assistant speech responses"}
+                  >
+                    <span className={voiceEnabled ? "animate-pulse" : ""}>{voiceEnabled ? "🔊" : "🔇"}</span>
+                    <span>{voiceEnabled ? "Voice Mode On" : "Voice Mode Off"}</span>
+                  </button>
                   <MemoryBadge />
                   <button
                     onClick={() => setIsExpanded(false)}
@@ -822,11 +882,21 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
                       )}
                       {m.timestamp && (
                         <div
-                          className={`mt-1.5 text-[10px] ${
+                          className={`mt-1.5 flex items-center justify-between text-[10px] ${
                             m.role === "user" ? "text-paper/75 text-right" : "text-ink-faint text-left"
                           }`}
                         >
-                          {m.timestamp}
+                          <span>{m.timestamp}</span>
+                          {m.role === "concierge" && (
+                            <button
+                              onClick={() => (isSpeaking ? stop() : speak(m.text))}
+                              className="inline-flex items-center gap-1 font-medium text-ink-soft hover:text-brand transition ml-2 px-2 py-0.5 rounded bg-paper-3/40 hover:bg-paper-3"
+                              title="Listen to this response"
+                            >
+                              <span>🔊</span>
+                              <span>Listen</span>
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -893,7 +963,7 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
                     </button>
                   ))}
                 </div>
-                <div className="flex items-end gap-3">
+                <div className="flex items-end gap-2.5">
                   <textarea
                     ref={modalTextareaRef}
                     value={text}
@@ -912,6 +982,20 @@ export function ModifyChat({ initialPrompt }: { initialPrompt?: string }) {
                     rows={1}
                     placeholder="Ask advice or request itinerary changes (Enter to send, Shift+Enter for newline)..."
                     className="flex-1 resize-none max-h-36 min-h-[46px] rounded-2xl border border-line bg-paper-2 px-4 py-2.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand/20 transition disabled:opacity-50 leading-relaxed scrollbar-none"
+                  />
+                  <VoiceButton
+                    value={text}
+                    onChange={(val) => {
+                      setText(val);
+                      if (modalTextareaRef.current) {
+                        modalTextareaRef.current.style.height = "auto";
+                        modalTextareaRef.current.style.height = `${Math.min(modalTextareaRef.current.scrollHeight, 140)}px`;
+                      }
+                    }}
+                    onSubmit={(val) => val.trim() && send(val.trim())}
+                    autoSubmit
+                    size="lg"
+                    title="Speak message (Words appear live & auto-sends)"
                   />
                   <button
                     onClick={() => send(text)}

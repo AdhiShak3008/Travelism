@@ -43,6 +43,8 @@ export interface SavedTripSummary {
   createdAt: string;
   hotelName?: string;
   sightsCount: number;
+  blobSnapshot?: any;
+  datasetSnapshot?: any;
 }
 
 const DEFAULT_PREFERENCES: TravelPreferences = {

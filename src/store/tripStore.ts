@@ -200,6 +200,7 @@ interface TripStore {
   // flow
   setStage: (s: Stage) => void;
   goToStage: (s: Stage) => void;
+  restoreSavedTrip: (savedBlob: TripBlob, savedDataset: DestinationDataset) => void;
   startDream: (dream: string, options?: { durationDays?: number; travelers?: number; origin?: string }) => Promise<void>;
   clearClarification: () => void;
   refineInvestigation: (text: string) => Promise<void>;
@@ -352,6 +353,20 @@ export const useTrip = create<TripStore>((set, get) => ({
       }
       set({ stage: s });
     }
+  },
+
+  restoreSavedTrip: (savedBlob, savedDataset) => {
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
+    set({
+      blob: savedBlob,
+      dataset: savedDataset,
+      stage: "package",
+      maxStageReached: "package",
+      investigating: false,
+      clarification: null,
+    });
   },
 
   clearClarification: () => set({ clarification: null }),
@@ -1506,6 +1521,8 @@ export const useTrip = create<TripStore>((set, get) => ({
       totalCost: total,
       hotelName: blob.hotels[0]?.name || (blob.preferences.stayMode === "wild_camping" ? "Wild Camping" : "Selected Stays"),
       sightsCount: blob.selectedPlaceIds.length || (dataset?.places.length ?? 8),
+      blobSnapshot: blob,
+      datasetSnapshot: dataset,
     });
 
     set({

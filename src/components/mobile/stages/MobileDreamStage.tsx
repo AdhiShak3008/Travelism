@@ -7,6 +7,7 @@ import { useTrip } from "@/store/tripStore";
 import { useAuth } from "@/store/authStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/ui/UserMenu";
+import { VoiceButton } from "@/components/ui/VoiceButton";
 
 const CATEGORIES = [
   { label: "🏝️ Tropical Islands", query: "Bali and Gili Islands for a relaxing 8 days with beachfront villas, surfing, and sunset dining" },
@@ -181,9 +182,19 @@ export function MobileDreamStage() {
           />
 
           <div className="mt-2 flex items-center justify-between border-t border-line/60 pt-2.5">
-            <span className="text-[11px] font-medium text-ink-faint">
-              {text.length > 0 ? `${text.length} chars` : "Type any destination"}
-            </span>
+            <div className="flex items-center gap-2">
+              <VoiceButton
+                value={text}
+                onChange={setText}
+                onSubmit={(val) => val.trim() && startDream(val.trim())}
+                autoSubmit
+                size="sm"
+                title="Speak destination (Words appear live & auto-launches)"
+              />
+              <span className="text-[11px] font-medium text-ink-faint">
+                {text.length > 0 ? `${text.length} chars` : "Speak or type"}
+              </span>
+            </div>
 
             <button
               onClick={() => text.trim() && startDream(text)}

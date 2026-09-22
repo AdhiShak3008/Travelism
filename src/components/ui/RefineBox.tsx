@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTrip } from "@/store/tripStore";
+import { VoiceButton } from "./VoiceButton";
 
 const EXAMPLES = [
   "More water sports & boat cruises",
@@ -52,13 +53,23 @@ export function RefineBox({ title, hint }: { title?: string; hint?: string }) {
           placeholder="e.g. Find jet ski rentals, coral reef snorkeling, and top seafood restaurants..."
           className="min-h-[50px] flex-1 resize-none rounded-xl border border-line bg-paper px-4 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint/70 focus:border-brand/50 disabled:opacity-50"
         />
-        <button
-          onClick={() => submit()}
-          disabled={!text.trim() || refining}
-          className="btn-primary !px-5 !py-3 whitespace-nowrap"
-        >
-          {refining ? "Scouting..." : "Scout Spots →"}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <VoiceButton
+            value={text}
+            onChange={setText}
+            onSubmit={(val) => val.trim() && submit(val.trim())}
+            autoSubmit
+            size="md"
+            title="Speak your wish (Words appear live & auto-scouts)"
+          />
+          <button
+            onClick={() => submit()}
+            disabled={!text.trim() || refining}
+            className="btn-primary !px-5 !py-3 whitespace-nowrap"
+          >
+            {refining ? "Scouting..." : "Scout Spots →"}
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import type { SignalScope, SteeringSignal } from "@/lib/types";
 import { useTrip } from "@/store/tripStore";
 import { cx } from "@/lib/format";
+import { VoiceButton } from "./VoiceButton";
 
 const PLACEHOLDERS: Record<string, string> = {
   trip: "e.g. I care about scenery more than museums, and the bathroom needs to be genuinely clean.",
@@ -84,6 +85,14 @@ export function SteeringBox({
           rows={compact ? 2 : 3}
           placeholder={PLACEHOLDERS[scope] ?? PLACEHOLDERS.stage}
           className="min-h-[44px] flex-1 resize-none rounded-xl border border-line bg-paper px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint/70 focus:border-brand/50 focus:ring-1 focus:ring-brand/30"
+        />
+        <VoiceButton
+          value={currentText}
+          onChange={handleChange}
+          onSubmit={() => submit()}
+          autoSubmit
+          size="md"
+          title="Speak guidance (Words appear live & auto-saves)"
         />
         <button
           type="button"

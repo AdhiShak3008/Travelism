@@ -12,6 +12,8 @@ const FALLBACK_HERO = "https://images.unsplash.com/photo-1506973035872-a4ec16b8e
 export function SavedTripsDrawer() {
   const { isSavedTripsOpen, closeSavedTrips, user, removeSavedTrip } = useAuth();
   const startDream = useTrip((s) => s.startDream);
+  const restoreSavedTrip = useTrip((s) => s.restoreSavedTrip);
+  const setStage = useTrip((s) => s.setStage);
   const [searchQuery, setSearchQuery] = useState("");
 
   const savedTrips = useMemo(() => {
@@ -30,7 +32,36 @@ export function SavedTripsDrawer() {
 
   if (!isSavedTripsOpen || !user) return null;
 
-  const handleLoadTrip = (trip: SavedTripSummary) => {
+  const handleOpenItinerary = (trip: SavedTripSummary) => {
+    closeSavedTrips();
+    if (trip.blobSnapshot && trip.datasetSnapshot) {
+      restoreSavedTrip(trip.blobSnapshot, trip.datasetSnapshot);
+      return;
+    }
+
+    // Check if the current in-memory trip matches this destination
+    const { blob, dataset } = useTrip.getState();
+    if (
+      dataset &&
+      blob.destinationName?.toLowerCase().trim() === trip.destinationName.toLowerCase().trim()
+    ) {
+      setStage("package");
+      return;
+    }
+
+    // If legacy save without snapshot, prompt user whether to trigger swarms
+    const shouldRunSwarms = window.confirm(
+      `This saved itinerary was stored in an earlier session without an offline snapshot.\n\nTrigger the AI Swarms to re-scout and generate the full day-by-day itinerary for ${trip.destinationName}?`
+    );
+    if (shouldRunSwarms) {
+      startDream(trip.destinationName, {
+        durationDays: trip.durationDays,
+        travelers: trip.travelers,
+      });
+    }
+  };
+
+  const handleTriggerSwarms = (trip: SavedTripSummary) => {
     closeSavedTrips();
     startDream(trip.destinationName, {
       durationDays: trip.durationDays,
@@ -104,7 +135,8 @@ export function SavedTripsDrawer() {
                     <SavedTripCard
                       key={trip.id}
                       trip={trip}
-                      onLoad={() => handleLoadTrip(trip)}
+                      onOpenItinerary={() => handleOpenItinerary(trip)}
+                      onTriggerSwarms={() => handleTriggerSwarms(trip)}
                       onDelete={() => removeSavedTrip(trip.id)}
                     />
                   ))
@@ -133,11 +165,13 @@ export function SavedTripsDrawer() {
 
 function SavedTripCard({
   trip,
-  onLoad,
+  onOpenItinerary,
+  onTriggerSwarms,
   onDelete,
 }: {
   trip: SavedTripSummary;
-  onLoad: () => void;
+  onOpenItinerary: () => void;
+  onTriggerSwarms: () => void;
   onDelete: () => void;
 }) {
   const [imgSrc, setImgSrc] = useState(trip.destinationHero || FALLBACK_HERO);
@@ -183,20 +217,31 @@ function SavedTripCard({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 p-3 bg-paper-3/40 border-t border-line/60">
+      <div className="flex flex-col gap-2 p-3 bg-paper-3/40 border-t border-line/60">
         <button
-          onClick={onLoad}
-          className="btn-primary !py-1.5 flex-1 !text-xs font-bold"
+          onClick={onOpenItinerary}
+          className="btn-primary !py-2 w-full !text-xs font-bold shadow-sm flex items-center justify-center gap-1.5"
+          title="Open day-by-day itinerary directly with AI Concierge ready (No swarm re-investigation)"
         >
-          Open & Modify Itinerary →
+          <span>Open Itinerary (AI Concierge)</span>
+          <span>→</span>
         </button>
-        <button
-          onClick={onDelete}
-          className="btn-ghost !py-1.5 !px-3 !text-xs !text-bad hover:!bg-bad/10"
-          title="Remove saved trip"
-        >
-          Delete
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onTriggerSwarms}
+            className="rounded-xl border border-line bg-paper px-3 py-1.5 text-xs font-semibold text-ink-soft hover:text-brand hover:border-brand/40 transition flex-1 flex items-center justify-center gap-1"
+            title="Re-run the AI web crawling swarm agents for fresh intelligence"
+          >
+            <span>⚡ Re-run Swarms</span>
+          </button>
+          <button
+            onClick={onDelete}
+            className="btn-ghost !py-1.5 !px-3 !text-xs !text-bad hover:!bg-bad/10"
+            title="Remove saved trip"
+          >
+            Delete
+          </button>
+        </div>
       </div>
     </div>
   );

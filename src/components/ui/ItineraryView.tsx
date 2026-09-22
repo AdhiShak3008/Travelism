@@ -6,6 +6,7 @@ import type { ItineraryDay, ItineraryStop } from "@/lib/types";
 import { useTrip } from "@/store/tripStore";
 import { inr, cx, formatDayDate } from "@/lib/format";
 import { InteractiveMapView } from "./InteractiveMapView";
+import { VoiceButton } from "./VoiceButton";
 
 const KIND_GLYPH: Record<ItineraryStop["kind"], string> = {
   travel: "🚙",
@@ -258,12 +259,20 @@ export function ItineraryView({ days }: { days: ItineraryDay[] }) {
                         <option value="travel">🚙 Travel</option>
                       </select>
                       <div className="flex items-center gap-2">
+                        <VoiceButton
+                          value={newStopLabel}
+                          onChange={setNewStopLabel}
+                          onSubmit={() => handleAddStop(d.day)}
+                          autoSubmit
+                          size="sm"
+                          title="Speak stop name (Appears live & auto-adds)"
+                        />
                         <button
                           onClick={() => handleAddStop(d.day)}
                           disabled={!newStopLabel.trim()}
                           className="btn-primary !py-1.5 !px-4 text-xs font-bold disabled:opacity-50"
                         >
-                          Save Stop
+                          Add Stop
                         </button>
                         <button
                           onClick={() => setAddingStopDay(null)}
