@@ -275,6 +275,16 @@ interface TripStore {
 
 export const IN_FLIGHT_STORAGE_KEY = "travelism_active_in_flight_trip_v1";
 
+export function getActiveUserKey(providedId?: string): string {
+  if (providedId) return providedId;
+  try {
+    const user = useAuth.getState().user;
+    if (user?.id) return user.id;
+    if (user?.email) return user.email;
+  } catch {}
+  return "usr_demo_vip";
+}
+
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function syncInFlightSessionToCloud(
@@ -289,10 +299,10 @@ export function syncInFlightSessionToCloud(
       await fetch("/api/trips/active", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, session, clear }),
+        body: JSON.stringify({ userId: getActiveUserKey(userId), session, clear }),
       });
     } catch {}
-  }, 400);
+  }, 300);
 }
 
 export function saveInFlightSession(state: {
@@ -305,8 +315,7 @@ export function saveInFlightSession(state: {
 }): void {
   if (typeof window === "undefined") return;
   try {
-    const user = useAuth.getState().user;
-    const userKey = user?.email || user?.id || "demo_user";
+    const userKey = getActiveUserKey();
 
     if (state.stage === "dream" && !state.blob?.destinationName && !state.dataset) {
       localStorage.removeItem(IN_FLIGHT_STORAGE_KEY);
@@ -357,8 +366,7 @@ export function clearInFlightSession(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(IN_FLIGHT_STORAGE_KEY);
-    const user = useAuth.getState().user;
-    const userKey = user?.email || user?.id || "demo_user";
+    const userKey = getActiveUserKey();
     syncInFlightSessionToCloud(userKey, null, true);
   } catch {}
 }
@@ -483,8 +491,7 @@ export const useTrip = create<TripStore>((set, get) => ({
   restoreInFlightSessionFromCloud: async (userId?: string) => {
     if (typeof window === "undefined") return false;
     try {
-      const user = useAuth.getState().user;
-      const userKey = userId || user?.email || user?.id || "demo_user";
+      const userKey = getActiveUserKey(userId);
       const res = await fetch(`/api/trips/active?userId=${encodeURIComponent(userKey)}`);
       if (!res.ok) return false;
       const data = (await res.json()) as { found?: boolean; session?: any };
@@ -502,8 +509,10 @@ export const useTrip = create<TripStore>((set, get) => ({
         investigating: false,
         clarification: null,
       });
-      // Mirror to local browser storage
-      saveInFlightSession(saved);
+      // Mirror to local browser storage directly without re-triggering remote sync
+      try {
+        localStorage.setItem(IN_FLIGHT_STORAGE_KEY, JSON.stringify(saved));
+      } catch {}
       return true;
     } catch {
       return false;

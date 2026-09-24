@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { motion } from "framer-motion";
-import { useTrip } from "@/store/tripStore";
+import { useTrip, saveInFlightSession } from "@/store/tripStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { MobileFlow } from "@/components/mobile/MobileFlow";
 import { StageProgress } from "@/components/ui/StageProgress";
@@ -33,14 +33,27 @@ export function Flow() {
   const hasCheckedInitialSession = useAuth((s) => s.hasCheckedInitialSession);
   const restoreSession = useAuth((s) => s.restoreSession);
 
-  // Restore active 400-min session and in-flight trip session on initial mount
+  // Restore active session and in-flight trip session on initial mount
   useEffect(() => {
     if (!hasCheckedInitialSession) {
       restoreSession();
     }
     const localRestored = useTrip.getState().restoreInFlightSession();
     if (!localRestored) {
-      void useTrip.getState().restoreInFlightSessionFromCloud();
+      const authUser = useAuth.getState().user;
+      const uid = authUser?.id || authUser?.email;
+      void useTrip.getState().restoreInFlightSessionFromCloud(uid);
+    } else {
+      // Local session was restored! Ensure it is synced to the cloud immediately so any other device / incognito tab gets it!
+      const st = useTrip.getState();
+      saveInFlightSession({
+        blob: st.blob,
+        dataset: st.dataset,
+        stage: st.stage,
+        maxStageReached: st.maxStageReached,
+        chatLog: st.chatLog,
+        travelerMemory: st.travelerMemory,
+      });
     }
   }, [hasCheckedInitialSession, restoreSession]);
 
@@ -49,7 +62,9 @@ export function Flow() {
     if (isAuthenticated) {
       const { stage, blob } = useTrip.getState();
       if (stage === "dream" && !blob.destinationName) {
-        void useTrip.getState().restoreInFlightSessionFromCloud();
+        const authUser = useAuth.getState().user;
+        const uid = authUser?.id || authUser?.email;
+        void useTrip.getState().restoreInFlightSessionFromCloud(uid);
       }
     }
   }, [isAuthenticated]);

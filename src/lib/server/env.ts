@@ -7,7 +7,9 @@ import "server-only";
 
 function get(name: string): string | undefined {
   const v = process.env[name];
-  return v && v.trim().length > 0 ? v.trim() : undefined;
+  if (!v) return undefined;
+  const trimmed = v.trim().replace(/^["']|["']$/g, "");
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export const ENV = {
@@ -22,8 +24,8 @@ export const ENV = {
   GOOGLE_SEARCH_CX: get("GOOGLE_SEARCH_CX") ?? get("GOOGLE_CX"),
   AMADEUS_CLIENT_ID: get("AMADEUS_CLIENT_ID"),
   AMADEUS_CLIENT_SECRET: get("AMADEUS_CLIENT_SECRET"),
-  UPSTASH_REDIS_REST_URL: get("UPSTASH_REDIS_REST_URL"),
-  UPSTASH_REDIS_REST_TOKEN: get("UPSTASH_REDIS_REST_TOKEN"),
+  UPSTASH_REDIS_REST_URL: get("UPSTASH_REDIS_REST_URL") ?? get("KV_REST_API_URL"),
+  UPSTASH_REDIS_REST_TOKEN: get("UPSTASH_REDIS_REST_TOKEN") ?? get("KV_REST_API_TOKEN"),
 } as const;
 
 export const CAP = {
