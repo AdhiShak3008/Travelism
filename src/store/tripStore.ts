@@ -201,6 +201,7 @@ interface TripStore {
   setStage: (s: Stage) => void;
   goToStage: (s: Stage) => void;
   restoreSavedTrip: (savedBlob: TripBlob, savedDataset: DestinationDataset) => void;
+  restoreInFlightSession: () => boolean;
   startDream: (dream: string, options?: { durationDays?: number; travelers?: number; origin?: string }) => Promise<void>;
   clearClarification: () => void;
   refineInvestigation: (text: string) => Promise<void>;
@@ -269,6 +270,70 @@ interface TripStore {
   // helpers
   recompute: () => void;
   pushMutation: (m: Mutation) => void;
+}
+
+export const IN_FLIGHT_STORAGE_KEY = "travelism_active_in_flight_trip_v1";
+
+export function saveInFlightSession(state: {
+  blob: TripBlob;
+  dataset: DestinationDataset | null;
+  stage: Stage;
+  maxStageReached: Stage;
+  chatLog?: ChatMessage[];
+  travelerMemory?: TravelerMemory;
+}): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (state.stage === "dream" && !state.blob?.destinationName && !state.dataset) {
+      localStorage.removeItem(IN_FLIGHT_STORAGE_KEY);
+      return;
+    }
+    if (state.blob?.destinationName || state.dataset) {
+      localStorage.setItem(
+        IN_FLIGHT_STORAGE_KEY,
+        JSON.stringify({
+          blob: state.blob,
+          dataset: state.dataset,
+          stage: state.stage,
+          maxStageReached: state.maxStageReached,
+          chatLog: state.chatLog || [],
+          travelerMemory: state.travelerMemory,
+          savedAt: Date.now(),
+        })
+      );
+    }
+  } catch (err) {
+    console.warn("[tripStore] Failed to save in-flight session to localStorage:", err);
+  }
+}
+
+export function loadInFlightSession(): {
+  blob: TripBlob;
+  dataset: DestinationDataset | null;
+  stage: Stage;
+  maxStageReached: Stage;
+  chatLog?: ChatMessage[];
+  travelerMemory?: TravelerMemory;
+} | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(IN_FLIGHT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.blob?.destinationName || parsed.dataset)) {
+      return parsed;
+    }
+  } catch (err) {
+    console.warn("[tripStore] Failed to load in-flight session from localStorage:", err);
+  }
+  return null;
+}
+
+export function clearInFlightSession(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(IN_FLIGHT_STORAGE_KEY);
+  } catch {}
 }
 
 export const useTrip = create<TripStore>((set, get) => ({
@@ -367,6 +432,25 @@ export const useTrip = create<TripStore>((set, get) => ({
       investigating: false,
       clarification: null,
     });
+  },
+
+  restoreInFlightSession: () => {
+    const saved = loadInFlightSession();
+    if (!saved || !saved.blob || (!saved.blob.destinationName && !saved.dataset)) {
+      return false;
+    }
+    const targetStage = saved.stage === "investigate" && saved.dataset ? "reveal" : saved.stage;
+    set({
+      blob: saved.blob,
+      dataset: saved.dataset,
+      stage: targetStage,
+      maxStageReached: saved.maxStageReached || targetStage,
+      chatLog: saved.chatLog?.length ? saved.chatLog : get().chatLog,
+      travelerMemory: saved.travelerMemory || get().travelerMemory,
+      investigating: false,
+      clarification: null,
+    });
+    return true;
   },
 
   clearClarification: () => set({ clarification: null }),
@@ -1533,6 +1617,7 @@ export const useTrip = create<TripStore>((set, get) => ({
   },
 
   reset: () => {
+    clearInFlightSession();
     const profile = seedFromProfile();
     const resetMem = mergeTravelerMemory(createDefaultTravelerMemory(), {
       dietary: profile.memoryDelta.dietary,
@@ -1737,4 +1822,22 @@ function investigationScript(blob: TripBlob, dataset: DestinationDataset) {
     bean_counter: { working: "Totaling costs", done: "Costs totaled" },
   };
   return map;
+}
+
+// Auto-persist in-flight session to localStorage on any state change
+if (typeof window !== "undefined") {
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  useTrip.subscribe((state) => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveInFlightSession({
+        blob: state.blob,
+        dataset: state.dataset,
+        stage: state.stage,
+        maxStageReached: state.maxStageReached,
+        chatLog: state.chatLog,
+        travelerMemory: state.travelerMemory,
+      });
+    }, 200);
+  });
 }

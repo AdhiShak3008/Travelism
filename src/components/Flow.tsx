@@ -33,11 +33,12 @@ export function Flow() {
   const hasCheckedInitialSession = useAuth((s) => s.hasCheckedInitialSession);
   const restoreSession = useAuth((s) => s.restoreSession);
 
-  // Restore active 400-min session on initial mount
+  // Restore active 400-min session and in-flight trip session on initial mount
   useEffect(() => {
     if (!hasCheckedInitialSession) {
       restoreSession();
     }
+    useTrip.getState().restoreInFlightSession();
   }, [hasCheckedInitialSession, restoreSession]);
 
   useEffect(() => {
