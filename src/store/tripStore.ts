@@ -893,7 +893,18 @@ export const useTrip = create<TripStore>((set, get) => ({
 
     get().addComment(text, "trip");
 
-    if (!liveMode) {
+    let isLive = liveMode;
+    if (isLive === null || isLive === undefined) {
+      try {
+        const caps = await fetchCapabilities();
+        isLive = caps.live;
+        set({ liveMode: isLive });
+      } catch {
+        isLive = false;
+      }
+    }
+
+    if (!isLive) {
       set({ lastMessage: "Steering noted. Live re-investigation requires the live pipeline." });
       return;
     }

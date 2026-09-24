@@ -13,6 +13,7 @@ import { FloatingConcierge } from "@/components/ui/FloatingConcierge";
 import { SavedTripsDrawer } from "@/components/ui/SavedTripsDrawer";
 import { PreferencesPage } from "@/components/ui/PreferencesPage";
 import { useAuth } from "@/store/authStore";
+import { fetchCapabilities } from "@/lib/liveClient";
 import { LightboxProvider } from "@/components/ui/Lightbox";
 import { DreamStage } from "@/components/stages/DreamStage";
 import { RevealStage } from "@/components/stages/RevealStage";
@@ -38,6 +39,11 @@ export function Flow() {
     if (!hasCheckedInitialSession) {
       restoreSession();
     }
+    // Eagerly resolve live pipeline capability for Wish Box re-investigations
+    fetchCapabilities().then((caps) => {
+      useTrip.setState({ liveMode: caps.live });
+    }).catch(() => {});
+
     const localRestored = useTrip.getState().restoreInFlightSession();
     if (!localRestored) {
       const authUser = useAuth.getState().user;
