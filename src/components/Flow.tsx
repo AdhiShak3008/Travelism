@@ -38,8 +38,21 @@ export function Flow() {
     if (!hasCheckedInitialSession) {
       restoreSession();
     }
-    useTrip.getState().restoreInFlightSession();
+    const localRestored = useTrip.getState().restoreInFlightSession();
+    if (!localRestored) {
+      void useTrip.getState().restoreInFlightSessionFromCloud();
+    }
   }, [hasCheckedInitialSession, restoreSession]);
+
+  // When user logs in or authenticates (e.g. from incognito or a new device), pull active trip from cloud
+  useEffect(() => {
+    if (isAuthenticated) {
+      const { stage, blob } = useTrip.getState();
+      if (stage === "dream" && !blob.destinationName) {
+        void useTrip.getState().restoreInFlightSessionFromCloud();
+      }
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });

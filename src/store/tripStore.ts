@@ -202,6 +202,7 @@ interface TripStore {
   goToStage: (s: Stage) => void;
   restoreSavedTrip: (savedBlob: TripBlob, savedDataset: DestinationDataset) => void;
   restoreInFlightSession: () => boolean;
+  restoreInFlightSessionFromCloud: (userId?: string) => Promise<boolean>;
   startDream: (dream: string, options?: { durationDays?: number; travelers?: number; origin?: string }) => Promise<void>;
   clearClarification: () => void;
   refineInvestigation: (text: string) => Promise<void>;
@@ -274,6 +275,26 @@ interface TripStore {
 
 export const IN_FLIGHT_STORAGE_KEY = "travelism_active_in_flight_trip_v1";
 
+let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function syncInFlightSessionToCloud(
+  userId: string,
+  session: unknown,
+  clear?: boolean
+): void {
+  if (typeof window === "undefined") return;
+  if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(async () => {
+    try {
+      await fetch("/api/trips/active", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, session, clear }),
+      });
+    } catch {}
+  }, 400);
+}
+
 export function saveInFlightSession(state: {
   blob: TripBlob;
   dataset: DestinationDataset | null;
@@ -284,23 +305,26 @@ export function saveInFlightSession(state: {
 }): void {
   if (typeof window === "undefined") return;
   try {
+    const user = useAuth.getState().user;
+    const userKey = user?.email || user?.id || "demo_user";
+
     if (state.stage === "dream" && !state.blob?.destinationName && !state.dataset) {
       localStorage.removeItem(IN_FLIGHT_STORAGE_KEY);
+      syncInFlightSessionToCloud(userKey, null, true);
       return;
     }
     if (state.blob?.destinationName || state.dataset) {
-      localStorage.setItem(
-        IN_FLIGHT_STORAGE_KEY,
-        JSON.stringify({
-          blob: state.blob,
-          dataset: state.dataset,
-          stage: state.stage,
-          maxStageReached: state.maxStageReached,
-          chatLog: state.chatLog || [],
-          travelerMemory: state.travelerMemory,
-          savedAt: Date.now(),
-        })
-      );
+      const payload = {
+        blob: state.blob,
+        dataset: state.dataset,
+        stage: state.stage,
+        maxStageReached: state.maxStageReached,
+        chatLog: state.chatLog || [],
+        travelerMemory: state.travelerMemory,
+        savedAt: Date.now(),
+      };
+      localStorage.setItem(IN_FLIGHT_STORAGE_KEY, JSON.stringify(payload));
+      syncInFlightSessionToCloud(userKey, payload, false);
     }
   } catch (err) {
     console.warn("[tripStore] Failed to save in-flight session to localStorage:", err);
@@ -333,6 +357,9 @@ export function clearInFlightSession(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(IN_FLIGHT_STORAGE_KEY);
+    const user = useAuth.getState().user;
+    const userKey = user?.email || user?.id || "demo_user";
+    syncInFlightSessionToCloud(userKey, null, true);
   } catch {}
 }
 
@@ -451,6 +478,36 @@ export const useTrip = create<TripStore>((set, get) => ({
       clarification: null,
     });
     return true;
+  },
+
+  restoreInFlightSessionFromCloud: async (userId?: string) => {
+    if (typeof window === "undefined") return false;
+    try {
+      const user = useAuth.getState().user;
+      const userKey = userId || user?.email || user?.id || "demo_user";
+      const res = await fetch(`/api/trips/active?userId=${encodeURIComponent(userKey)}`);
+      if (!res.ok) return false;
+      const data = (await res.json()) as { found?: boolean; session?: any };
+      if (!data.found || !data.session) return false;
+      const saved = data.session;
+      if (!saved.blob || (!saved.blob.destinationName && !saved.dataset)) return false;
+      const targetStage = saved.stage === "investigate" && saved.dataset ? "reveal" : saved.stage;
+      set({
+        blob: saved.blob,
+        dataset: saved.dataset,
+        stage: targetStage,
+        maxStageReached: saved.maxStageReached || targetStage,
+        chatLog: saved.chatLog?.length ? saved.chatLog : get().chatLog,
+        travelerMemory: saved.travelerMemory || get().travelerMemory,
+        investigating: false,
+        clarification: null,
+      });
+      // Mirror to local browser storage
+      saveInFlightSession(saved);
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   clearClarification: () => set({ clarification: null }),

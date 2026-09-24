@@ -78,3 +78,8 @@ export async function redisGetJson<T>(key: string, signal?: AbortSignal): Promis
     return null;
   }
 }
+
+/** DEL a key (removes entry). */
+export async function redisDel(key: string, signal?: AbortSignal): Promise<void> {
+  await command<number>(["DEL", key], signal);
+}
