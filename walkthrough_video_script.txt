@@ -1,0 +1,269 @@
+================================================================================
+TRAVELISM — 15-MINUTE VIDEO WALKTHROUGH SCRIPT
+Role: e-GMAT Forward Deployed Engineer (FDE) — Assignment 1
+Candidate: Aditya Shakya
+System: Travelism (Autonomous Multi-Agent Travel Planning & Concierge Engine)
+Production URL: https://travelism-tia.vercel.app
+
+TOTAL WORD COUNT: ~1,850 words (Paced for 130–140 words/min = EXACTLY 14–15 minutes)
+TONE: Conversational, clear, confident, engineering-focused. Easy to speak naturally.
+================================================================================
+
+TIMELINE OVERVIEW:
+  [00:00 - 02:00] Part 1: The Problem & Why It Matters (Points 1 & 2) ~260 words
+  [02:00 - 04:30] Part 2: Architecture, Rejected Designs & Models (Points 3, 4, 5) ~330 words
+  [04:30 - 07:00] Part 3: Where We Use Code vs. Where We Use LLMs (Point 7) ~320 words
+  [07:00 - 10:00] Part 4: Prompt Deep Dive: V1 vs. Current & How We Tuned It (Points 8, 9, 11) ~400 words
+  [10:00 - 12:30] Part 5: Live Demo & Real Production Challenges (Point 10) ~310 words
+  [12:30 - 14:30] Part 6: How We Test & Prevent Regressions (Point 6) ~270 words
+  [14:30 - 15:00] Part 7: Wrap Up & Conclusion ~60 words
+
+================================================================================
+PART 1: THE PROBLEM & WHY IT MATTERS (00:00 – 02:00)
+Target: ~260 words | ~2 minutes
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Show the browser at https://travelism-tia.vercel.app on the home "Dream" screen.
+Cursor resting naturally on the search input box.
+
+[SPOKEN SCRIPT]:
+"Hi everyone, my name is Aditya Shakya. Today, I'm going to walk you through Travelism, 
+an autonomous travel-planning system that I designed and built.
+
+Let's start with the problem. Planning a trip today is painful. If you want to plan a real 
+vacation—say, a week exploring Kyoto or an off-grid trip to Tawang in the Himalayas—you 
+usually end up with twenty browser tabs open. You have TripAdvisor for spots, Google Maps 
+for routes, booking sites for hotels, airline websites for flights, and outdated blog posts 
+for travel tips. It takes hours of manual work just to piece together a basic itinerary.
+
+Now, you might think: why not just ask ChatGPT? 
+Well, general-purpose chatbots fail at travel. If you ask a generic AI to plan your trip, 
+it hallucinates. It suggests attractions that closed two years ago. It ignores geography—like 
+putting three places in one day that are a six-hour drive apart. And worst of all, it has 
+no concept of real-world math: it will promise you a luxury vacation for five hundred dollars, 
+or add up hotel nights and flight tickets completely wrong.
+
+This problem is critical because travel is high-stakes. People spend real savings and take 
+rare vacation days. If your itinerary sends you to a closed mountain pass, or book you into 
+a hotel with terrible cleanliness, your whole holiday is ruined. 
+
+I built Travelism to solve this: by combining real-time web-scouting agents with deterministic 
+math, geofencing, and an interactive AI Concierge."
+
+================================================================================
+PART 2: ARCHITECTURE, REJECTED DESIGNS & MODELS (02:00 – 04:30)
+Target: ~330 words | ~2.5 minutes
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Switch to VS Code. 
+Show the file tree under `src/lib/agents.ts` and `src/lib/server/investigate.ts`.
+
+[SPOKEN SCRIPT]:
+"Here is how Travelism is structured under the hood.
+
+Instead of one giant AI prompt doing everything, Travelism uses a swarm of specialized 
+agents. Each agent has one clear job:
+- 'Scout' finds real attractions and local food recommendations.
+- 'Middleman' checks that spots actually exist and are inside the right city.
+- 'Lens' grabs verified, high-quality photos.
+- 'Pillow' inspects hotel cleanliness and bathroom scores.
+- 'Weather Witch' checks seasonal weather and packing needs.
+- 'Penny Pincher' calculates budgets and currency conversions.
+- And 'Concierge' is our conversational assistant that chats with the traveler and edits the trip.
+
+When designing this, I considered two other architectures and rejected both:
+
+First, I considered a 'Single Mega-Prompt'—one prompt with ten function calls trying to do 
+research, hotels, weather, and budget all at once. I rejected this because it was slow, 
+expensive, and inaccurate. Large prompts get easily confused and hallucinate when you give 
+them too many competing tasks.
+
+Second, I tried an unconstrained multi-agent chat—where agents chat freely with each other. 
+I rejected this because open loops are unpredictable. Agents talk back and forth forever, 
+latency explodes, and costs run out of control.
+
+So I chose a Hybrid Pipeline: a linear, directed pipeline to gather the data fast, 
+Server-Sent Events to stream progress to the user in real time, and LangGraph for 
+self-correcting loops when an itinerary breaks constraints.
+
+For models: we use Groq-hosted open-source models—specifically `openai/gpt-oss-120b` for 
+deep reasoning, and `openai/gpt-oss-20b` as a fast fallback. Groq runs at over 250 tokens 
+per second. When planning a vacation, speed is everything. A sub-second response keeps the 
+user engaged."
+
+================================================================================
+PART 3: WHERE WE USE CODE VS. WHERE WE USE LLMS (04:30 – 07:00)
+Target: ~320 words | ~2.5 minutes
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Open `src/lib/engine.ts` in VS Code. 
+Scroll to and highlight `computeCosts` (around line 50) and `buildItinerary`.
+
+[SPOKEN SCRIPT]:
+"A central rule of building reliable AI products is knowing when to use an LLM, and when 
+NOT to use an LLM.
+
+In Travelism, I drew a very strict boundary between deterministic code and AI reasoning.
+
+Deterministic TypeScript code handles three things:
+Number one: All financial math and budgeting. 
+Never let an LLM do multiplication or addition. Look at this function, `computeCosts`. 
+When a traveler changes group size from two to four people, or switches currency from USD 
+to INR, that calculation is 100% deterministic code. Hotel rates multiplied by nights, 
+flights multiplied by passengers, plus taxes. It is mathematically impossible for Travelism 
+to hallucinate your budget.
+
+Number two: Calendar timelines and day slotting. 
+Figuring out Day 1, Day 2, and Day 3, spacing out driving times, and making sure morning 
+activities come before dinner—that is all handled by deterministic scheduling algorithms 
+in `buildItinerary`.
+
+Number three: Geofencing. 
+If an AI suggests a restaurant, our code checks its coordinates against a geographical 
+boundary to confirm it is actually inside the destination.
+
+So where DO we use LLMs?
+We use LLMs where human flexibility is needed:
+1. Understanding ambiguous requests—like 'a peaceful mountain getaway with authentic food'.
+2. Reading raw website text to pull out interesting stories and local tips.
+3. And running our AI Concierge—translating a user's natural request like 'Make day 3 a beach 
+day' into a clean, structured JSON action that our code can execute safely.
+
+This split gives us the best of both worlds: human-like flexibility on the front, with 
+rock-solid mathematical reliability underneath."
+
+================================================================================
+PART 4: PROMPT DEEP DIVE: V1 VS. CURRENT & HOW WE TUNED IT (07:00 – 10:00)
+Target: ~400 words | ~3 minutes
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Open VS Code in Split View:
+Left: `submission-package/01_prompt/concierge_prompt_v1.ts`
+Right: `submission-package/01_prompt/concierge_prompt_current.ts`
+
+[SPOKEN SCRIPT]:
+"Now let's look at the prompts themselves. 
+On the left is Concierge Prompt V1 from our early build. 
+On the right is our Current Production Prompt.
+
+We didn't rewrite this prompt from scratch every week. Instead, we observed real failure 
+modes in production, and tuned the prompt with focused, high-leverage rules.
+
+Let's look at four specific problems we discovered and how we fixed them:
+
+First: The Lazy One-Liner Problem.
+In V1, when a user asked: 'Audit my itinerary and tell me what to improve', the model would 
+execute the change in the background, but reply with a dry one-liner: 'Done! I have updated 
+your itinerary.' That is a terrible user experience.
+So in the current prompt, we added Rule 1:
+'CRITICAL REQUIREMENT: NEVER return a dry or lazy 1-liner like \"Done!\". ALWAYS provide a 
+comprehensive, beautifully structured markdown reply with bold headers, timings, and 
+explanations for what you evaluated or changed.'
+Now, the AI walks you through its exact reasoning.
+
+Second: Hallucinating Openings during Closures.
+In V1, if a road was snowed out or a temple closed on Mondays, the Concierge would still 
+schedule it. 
+To fix this, we connected our Middleman agent directly into the prompt. Now, the prompt 
+receives an alert called `MIDDLEMAN ARBITER FACT-CHECK ENFORCEMENT`. If a closure exists, 
+the prompt is instructed: 'You MUST incorporate this closure into your answer.'
+
+Third: Conversation Amnesia.
+In V1, if you told the Concierge in message 1 that you are vegan, by message 4 it suggested 
+a steakhouse. 
+In the current prompt, we injected an active memory block: `ACTIVE TRAVELER MEMORY`, and we 
+added a `memoryDelta` field in the return JSON. Now, learned preferences stay with you 
+across the entire trip.
+
+Fourth: Currency Confusion.
+When a user switched their display currency to Euros or Dollars, V1 kept quoting Indian Rupees. 
+We fixed this with one clear instruction: 'Active Display Currency: ${currency}. STRICT 
+REQUIREMENT: All prices quoted in your conversation MUST use this currency.'
+
+This is how we tuned the system: finding exact user pain points, and fixing them with 
+targeted constraints."
+
+================================================================================
+PART 5: LIVE DEMO & REAL PRODUCTION CHALLENGES (10:00 – 12:30)
+Target: ~310 words | ~2.5 minutes
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Switch to Browser at https://travelism-tia.vercel.app on an active destination (e.g. Tawang).
+Click the Floating Concierge chat button.
+Type: "Make day 3 a relaxed culinary and cafe day, and check if I need any permits."
+Send and watch the response stream in.
+
+[SPOKEN SCRIPT]:
+"Let's see this live. 
+
+Here we have an active trip to Tawang. I'm opening the Concierge and asking:
+'Make day 3 a relaxed culinary and cafe day, and check if I need any permits.'
+
+Watch what happens:
+First, notice the response. It doesn't give a lazy one-liner. It explains why resting is 
+important at high altitude, breaks down the local Monpa food you should try, and reminds 
+us that Tawang requires an Inner Line Permit.
+Second, look at the schedule: Day 3 was automatically updated with morning cafes, afternoon 
+rest, and traditional dinner stops. The UI and the trip state mutated in real time.
+
+Now, what real challenges did we hit building this?
+
+The first challenge was Latency and Cold Starts. 
+Running live searches and LLM reasoning took 12 seconds per trip. Users hated waiting. 
+We fixed this by building a two-tier caching system: an in-memory L1 cache, plus an Upstash 
+Redis L2 cache. Common searches now load in under 300 milliseconds.
+
+The second challenge was Cross-Device Session Loss. 
+Earlier, if a user started planning on desktop, then opened an incognito tab or checked on 
+mobile, their trip reset to zero because it only lived in browser local storage. 
+We solved this by building a cloud persistence endpoint backed by Neon Postgres. Now, as 
+soon as you log in on any device, your in-progress trip, spots, and notes restore instantly."
+
+================================================================================
+PART 6: HOW WE TEST & PREVENT REGRESSIONS (12:30 – 14:30)
+Target: ~270 words | ~2 minutes
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Switch to VS Code Terminal. 
+Type and run: `node submission-package/02_evaluation/test-langgraph.mjs`
+Show the output.
+
+[SPOKEN SCRIPT]:
+"Finally: how do we know our system actually works, and that a code or prompt change didn't 
+silently break it?
+
+In our submission package, under `02_evaluation/`, we have four automated regression tests. 
+Let me run one right now: `node submission-package/02_evaluation/test-langgraph.mjs`.
+
+Look at the terminal:
+This test runs our LangGraph state machine. It simulates building an itinerary. 
+On iteration 1, the Auditor node spots an issue: transit duration between spots exceeds 
+5 hours. Instead of returning that broken plan to the user, our routing logic catches the 
+warning, loops back to the Synthesizer node, and rebuilds the day. Iteration 2 passes all 
+feasibility checks, and the plan is finalized and saved to checkpoint storage. This test 
+guarantees our self-correction loop never crashes or gets stuck in infinite loops.
+
+Our other tests catch real historical bugs:
+- `test-investigate.mjs` checks our live streaming pipeline and stops flight hallucinations. 
+  In an early test, a flight from Hyderabad to Miami was hallucinated as a two-hour non-stop! 
+  This test verifies that real layovers and flight durations are used.
+- `test-profile.mjs` verifies that traveler profiles work. It sends the same destination—Jaipur—to 
+  a budget vegetarian traveler and a luxury traveler, and asserts that hotel prices and food 
+  recommendations actually change.
+- And `test-images.mjs` verifies that place photos are real, verified images from travel blogs 
+  and CDNs, not broken links or generic icons."
+
+================================================================================
+PART 7: WRAP UP & CONCLUSION (14:30 – 15:00)
+Target: ~60 words | ~30 seconds
+--------------------------------------------------------------------------------
+[ON SCREEN]: 
+Switch back to the Travelism browser window showing the completed trip.
+
+[SPOKEN SCRIPT]:
+"To wrap up: Travelism shows how to build an AI product that users can actually depend on. 
+We keep math and scheduling deterministic, use fast LLMs for human communication, tune 
+prompts based on real user failures, and guard everything with regression tests.
+
+Thank you for your time, and I look forward to speaking with the e-GMAT team."
+================================================================================

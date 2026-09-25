@@ -9,7 +9,7 @@ import { arbitrateConciergeFactCheck } from "@/lib/server/middleman";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const SingleActionSchema = z.object({
+const SingleActionObjectSchema = z.object({
   kind: z.string().nullish(),
   action: z.string().nullish(),
   value: z.union([z.number(), z.string()]).nullish(),
@@ -21,7 +21,7 @@ const SingleActionSchema = z.object({
   stops: z
     .array(
       z.object({
-        kind: z.enum(["visit", "meal", "travel", "rest", "hotel"]).catch("visit"),
+        kind: z.enum(["visit", "meal", "travel", "rest", "hotel", "cafe", "sightseeing", "free"]).catch("visit"),
         label: z.string().catch("Scheduled Stop"),
         start: z.string().catch("10:00"),
         end: z.string().catch("12:00"),
@@ -31,7 +31,7 @@ const SingleActionSchema = z.object({
     .nullish(),
   stop: z
     .object({
-      kind: z.enum(["visit", "meal", "travel", "rest", "hotel"]).catch("visit"),
+      kind: z.enum(["visit", "meal", "travel", "rest", "hotel", "cafe", "sightseeing", "free"]).catch("visit"),
       label: z.string().catch("Scheduled Stop"),
       start: z.string().catch("10:00"),
       end: z.string().catch("12:00"),
@@ -52,6 +52,8 @@ const SingleActionSchema = z.object({
     .nullish(),
   deltaLabel: z.string().nullish(),
 });
+
+const SingleActionSchema = z.union([SingleActionObjectSchema, z.string()]);
 
 const ChatResponseSchema = z.object({
   reply: z.string().nullish(),
@@ -246,7 +248,21 @@ YOUR CORE RULES & SUPERPOWERS:
    - Quote ALL prices, activity costs, and rates in "${currency}".
    - Return new learned traveler facts in "memoryDelta" so they persist.
 
-Always return STRICT JSON matching the schema.`;
+Always return STRICT JSON in this exact structure:
+{
+  "reply": "Your rich, formatted markdown answer with bold headers, bullet points, recommendations, food guides, and permit advice...",
+  "action": {
+    "kind": "replace_day_stops" | "add_activity" | "add_day_stop" | "remove_day_stop" | "set_day_focus" | "set_stay_mode" | "swap_hotel" | "upgrade_hotel" | "cheaper_hotel" | "set_duration" | "none",
+    "dayNum": 3,
+    "dayTitle": "Relaxed Culinary & Café Day",
+    "stops": [
+      { "kind": "meal" | "visit" | "rest" | "travel", "label": "Morning Bakery & Butter Tea", "start": "09:00", "end": "10:30", "note": "Fresh khapse and tea" }
+    ]
+  },
+  "memoryDelta": {
+    "learnedFacts": ["prefers relaxed culinary and cafe pacing"]
+  }
+}`;
 
     chatMessages = [{ role: "system", content: systemPrompt }];
 
@@ -305,11 +321,44 @@ Always return STRICT JSON matching the schema.`;
       .replace(/(?:^|\n)\s*---\s*\n\s*\{[\s\S]*\}\s*$/gi, "")
       .trim();
 
-    // Consolidate actions (support both single action and multiple actions array)
-    const rawActionList = [
-      ...(res.actions || []),
-      ...(res.action ? [res.action] : []),
-    ];
+    // Consolidate actions (support single action object, string action, or array)
+    const rawActionList: any[] = [];
+    if (Array.isArray(res.actions)) {
+      rawActionList.push(...res.actions);
+    }
+    if (res.action) {
+      if (typeof res.action === "string") {
+        rawActionList.push({
+          kind: res.action,
+          dayNum: (res as any).dayNum ?? (res as any).day,
+          dayTitle: (res as any).dayTitle,
+          stops: (res as any).stops,
+          stop: (res as any).stop,
+          value: (res as any).value,
+        });
+      } else {
+        rawActionList.push(res.action);
+      }
+    }
+    // Also capture if root object itself contains action / day / stops
+    if (typeof (res as any).action === "string" && (res as any).action !== "none" && !rawActionList.length) {
+      rawActionList.push({
+        kind: (res as any).action,
+        dayNum: (res as any).dayNum ?? (res as any).day,
+        dayTitle: (res as any).dayTitle,
+        stops: (res as any).stops,
+        stop: (res as any).stop,
+        value: (res as any).value,
+      });
+    }
+    if ((res as any).stops && Array.isArray((res as any).stops) && !rawActionList.some((a) => a.kind === "replace_day_stops")) {
+      rawActionList.push({
+        kind: "replace_day_stops",
+        dayNum: (res as any).dayNum ?? (res as any).day ?? 3,
+        dayTitle: (res as any).dayTitle || "Customized Day",
+        stops: (res as any).stops,
+      });
+    }
 
     const allActions = rawActionList.map((a) => {
       const dayVal = a.dayNum ?? a.day;
